@@ -1041,7 +1041,7 @@ def build_pdf_from_record(record):
     pdf = FPDF(format="A4", unit="mm")
 
     # Reservar espacio para que el texto no pise el footer (ANTES de add_page)
-    FOOTER_OFFSET = 10  # mm hacia arriba
+    FOOTER_OFFSET = 8  # mm hacia arriba
     pdf.set_auto_page_break(auto=True, margin=FOOTER_H + FOOTER_OFFSET + 6)
 
     pdf.add_page()
