@@ -1041,26 +1041,23 @@ def build_pdf_from_record(record):
     header_img = static_path("img", "header.jpg")
     footer_img = static_path("img", "footer.jpg")
 
-    # --- HEADER ---
-    # Si querés que el contenido empiece más abajo, subí este valor (ej 45-55)
-    CONTENT_START_Y = 45
+    # Ajustes
+    CONTENT_START_Y = 45   # dónde empieza el contenido
+    FOOTER_H = 18          # altura del footer en mm
 
+    # HEADER (a ancho completo)
     if os.path.exists(header_img):
-        # Header a ancho completo (mantiene proporción)
         pdf.image(header_img, x=0, y=0, w=210)
 
-    # --- FOOTER ---
-    # Bajá/subí la altura del footer acá (15-22 suele quedar bien)
-    FOOTER_H = 18
+    # FOOTER (forzado para que no se agrande)
     if os.path.exists(footer_img):
         footer_y = 297 - FOOTER_H
-        # Importante: forzar tamaño para que NO se haga gigante
         pdf.image(footer_img, x=0, y=footer_y, w=210, h=FOOTER_H)
 
-    # --- Estilos ---
+    # Colores y márgenes
     title_color = (33, 37, 104)
     field_color = (0, 0, 0)
-    line_color  = (86, 189, 181)
+    line_color = (86, 189, 181)
 
     pdf.set_draw_color(*line_color)
     pdf.set_line_width(0.8)
@@ -1078,7 +1075,7 @@ def build_pdf_from_record(record):
         pdf.set_text_color(*field_color)
         pdf.cell(120, 10, value or "")
 
-    # --- Contenido (acá es donde antes tenías y=60) ---
+    # Acá “reemplaza” el viejo y=60
     y = CONTENT_START_Y
 
     pdf.line(25, y, 200, y)
@@ -1090,16 +1087,17 @@ def build_pdf_from_record(record):
         "Nombre y Apellido:",
         f"{record.get('patient_name','')} {record.get('patient_surname','')}",
         y + 2,
-        x_value=65
+        x_value=65,
     )
     y += 10
 
     add_label_value("DNI:", record.get("document_number", ""), y + 2, x_value=35)
     y += 12
 
-    # ... seguís con tu layout igual que antes usando la variable y ...
+    # ...seguí pegando tu resto del PDF acá igual, usando la variable y...
 
     return pdf.output(dest="S").encode("latin-1")
+
 
 
 
