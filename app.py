@@ -1,9 +1,7 @@
 import os
-import socket
 import ssl
 import datetime
 from io import BytesIO
-from flask import send_file
 from datetime import date
 from collections import defaultdict
 from functools import wraps
@@ -12,7 +10,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2 import IntegrityError
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
 from fpdf import FPDF
 
@@ -30,125 +28,123 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USERNAME = os.environ.get("SMTP_USERNAME")  # puede no estar seteado en dev
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")  # App Password
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER") or (SMTP_USERNAME or "")
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
+
 def get_today_iso():
     return date.today().isoformat()
 
+
 def is_smtp_configured() -> bool:
-    """Valida que haya credenciales SMTP reales seteadas (Cloud Run)."""
-    return bool(SMTP_USERNAME and SMTP_PASSWORD and SMTP_SERVER and SMTP_PORT)
+    return bool(SMTP_USERNAME and SMTP_PASSWORD and SMTP_SERVER and SMTP_PORT and EMAIL_SENDER)
+
 
 # ----------------------------
 # Neon (PostgreSQL)
 # ----------------------------
 def get_db_connection():
     # DATABASE_URL esperado: postgresql://user:pass@host/db?sslmode=require
-    # En Neon suele incluir sslmode=require; igual forzamos sslmode=require acá.
     return psycopg2.connect(
         os.environ["DATABASE_URL"],
         cursor_factory=RealDictCursor,
-        sslmode="require"
+        sslmode="require",
     )
+
 
 def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
+    try:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS companies (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            address TEXT,
+            phone TEXT,
+            email TEXT NOT NULL
+        );
+        """)
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS companies (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        address TEXT,
-        phone TEXT,
-        email TEXT NOT NULL
-    );
-    """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS patients (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            surname TEXT NOT NULL,
+            document_number TEXT UNIQUE NOT NULL,
+            phone TEXT,
+            email TEXT,
+            age INTEGER,
+            company_id INTEGER REFERENCES companies(id)
+        );
+        """)
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS patients (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        surname TEXT NOT NULL,
-        document_number TEXT UNIQUE NOT NULL,
-        phone TEXT,
-        email TEXT,
-        age INTEGER,
-        company_id INTEGER REFERENCES companies(id)
-    );
-    """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS medical_records (
+            id SERIAL PRIMARY KEY,
+            patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+            diagnosis TEXT NOT NULL,
+            date DATE NOT NULL,
+            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            license_type TEXT,
+            justified_days INTEGER,
+            license_start DATE,
+            license_end DATE,
+            return_date DATE,
+            observations TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS medical_records (
-        id SERIAL PRIMARY KEY,
-        patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
-        diagnosis TEXT NOT NULL,
-        date DATE NOT NULL,
-        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-        license_type TEXT,
-        justified_days INTEGER,
-        license_start DATE,
-        license_end DATE,
-        return_date DATE,
-        observations TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
-    );
-    """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL
+        );
+        """)
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL
-    );
-    """)
-
-    conn.commit()
-    cur.close()
-    conn.close()
 
 def add_default_user():
-    """
-    Crea el usuario admin una sola vez usando variables de entorno.
-    Recomendado en Cloud Run: NO hardcodear.
-    """
     username = os.environ.get("ADMIN_USER")
     password = os.environ.get("ADMIN_PASSWORD")
 
-    # Si no están seteadas, NO crear nada (evita crear con defaults inseguros)
     if not username or not password:
         print("[INFO] ADMIN_USER / ADMIN_PASSWORD no seteadas. No se crea usuario por defecto.")
         return
 
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id FROM users WHERE username = %s", (username,))
-    user = cur.fetchone()
+    try:
+        cur.execute("SELECT id FROM users WHERE username = %s", (username,))
+        user = cur.fetchone()
 
-    if user is None:
-        password_hash = generate_password_hash(password)
-        try:
-            cur.execute(
-                "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
-                (username, password_hash),
-            )
-            conn.commit()
-            print(f"Usuario '{username}' creado exitosamente.")
-        except IntegrityError:
-            conn.rollback()
-            print(f"Usuario '{username}' ya existe (IntegrityError).")
-    else:
-        print(f"Usuario '{username}' ya existe.")
+        if user is None:
+            password_hash = generate_password_hash(password)
+            try:
+                cur.execute(
+                    "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
+                    (username, password_hash),
+                )
+                conn.commit()
+                print(f"Usuario '{username}' creado exitosamente.")
+            except IntegrityError:
+                conn.rollback()
+                print(f"Usuario '{username}' ya existe (IntegrityError).")
+        else:
+            print(f"Usuario '{username}' ya existe.")
+    finally:
+        cur.close()
+        conn.close()
 
-    cur.close()
-    conn.close()
 
-# Inicializar DB al arrancar (CREATE TABLE IF NOT EXISTS es seguro)
-# En Cloud Run puede ejecutarse por instancia, pero no rompe.
 if os.environ.get("INIT_DB_ON_STARTUP", "1") == "1":
     try:
         init_db()
@@ -169,8 +165,8 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+
 def parse_date(value):
-    """Convierte 'YYYY-MM-DD' a date, o devuelve None."""
     if not value:
         return None
     if isinstance(value, (datetime.date, datetime.datetime)):
@@ -180,8 +176,21 @@ def parse_date(value):
     except Exception:
         return None
 
+
 def static_path(*parts):
     return os.path.join(BASE_DIR, "static", *parts)
+
+
+def get_patient_company_id(patient_id: int):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT company_id FROM patients WHERE id = %s", (patient_id,))
+        row = cur.fetchone()
+        return row["company_id"] if row else None
+    finally:
+        cur.close()
+        conn.close()
 
 
 # ----------------------------
@@ -196,19 +205,23 @@ def login():
 
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE username = %s", (username,))
-        user = cur.fetchone()
-        cur.close()
-        conn.close()
+        try:
+            cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+            user = cur.fetchone()
+        finally:
+            cur.close()
+            conn.close()
 
         if user and check_password_hash(user["password_hash"], password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             flash("Inicio de sesión exitoso.", "success")
             return redirect(url_for("home"))
+
         error = "Usuario o contraseña incorrectos. Por favor, intente de nuevo."
 
     return render_template("login.html", error=error)
+
 
 @app.route("/logout")
 def logout():
@@ -232,68 +245,70 @@ def home():
     selected_patient = None
     medical_history = []
 
-    # Companies
-    company_query = "SELECT id, name, address, phone, email FROM companies"
-    company_params = []
-    if search_company_name:
-        company_query += " WHERE name ILIKE %s"
-        company_params.append(f"%{search_company_name}%")
-    company_query += " ORDER BY name"
+    try:
+        # Companies
+        company_query = "SELECT id, name, address, phone, email FROM companies"
+        company_params = []
+        if search_company_name:
+            company_query += " WHERE name ILIKE %s"
+            company_params.append(f"%{search_company_name}%")
+        company_query += " ORDER BY name"
 
-    cur.execute(company_query, company_params)
-    companies = cur.fetchall()
+        cur.execute(company_query, company_params)
+        companies = cur.fetchall()
 
-    # Selected patient + history
-    if search_patient_document:
-        cur.execute(
-            """
+        # Selected patient + history
+        if search_patient_document:
+            cur.execute(
+                """
+                SELECT p.*, c.name AS company_name
+                FROM patients p
+                LEFT JOIN companies c ON p.company_id = c.id
+                WHERE p.document_number = %s
+                """,
+                (search_patient_document,),
+            )
+            selected_patient = cur.fetchone()
+
+            if selected_patient:
+                cur.execute(
+                    """
+                    SELECT mr.*, c.name AS company_name
+                    FROM medical_records mr
+                    JOIN companies c ON mr.company_id = c.id
+                    WHERE mr.patient_id = %s
+                    ORDER BY mr.date DESC, mr.id DESC
+                    """,
+                    (selected_patient["id"],),
+                )
+                medical_history = cur.fetchall()
+            else:
+                flash(f"Paciente con documento '{search_patient_document}' no encontrado.", "warning")
+
+        # Patients list
+        patient_query = """
             SELECT p.*, c.name AS company_name
             FROM patients p
             LEFT JOIN companies c ON p.company_id = c.id
-            WHERE p.document_number = %s
-            """,
-            (search_patient_document,),
-        )
-        selected_patient = cur.fetchone()
+        """
+        patient_params = []
 
-        if selected_patient:
-            cur.execute(
-                """
-                SELECT mr.*, c.name AS company_name
-                FROM medical_records mr
-                JOIN companies c ON mr.company_id = c.id
-                WHERE mr.patient_id = %s
-                ORDER BY mr.date DESC, mr.id DESC
-                """,
-                (selected_patient["id"],),
-            )
-            medical_history = cur.fetchall()
-        else:
-            flash(f"Paciente con documento '{search_patient_document}' no encontrado.", "warning")
+        if search_company_name:
+            matching_company_ids = [c["id"] for c in companies]
+            if matching_company_ids:
+                placeholders = ",".join(["%s"] * len(matching_company_ids))
+                patient_query += f" WHERE p.company_id IN ({placeholders})"
+                patient_params.extend(matching_company_ids)
+            else:
+                patient_query += " WHERE 1=0"
 
-    # Patients list (optionally filtered by company ids)
-    patient_query = """
-        SELECT p.*, c.name AS company_name
-        FROM patients p
-        LEFT JOIN companies c ON p.company_id = c.id
-    """
-    patient_params = []
+        patient_query += " ORDER BY p.surname, p.name"
+        cur.execute(patient_query, patient_params)
+        patients = cur.fetchall()
 
-    if search_company_name:
-        matching_company_ids = [c["id"] for c in companies]
-        if matching_company_ids:
-            placeholders = ",".join(["%s"] * len(matching_company_ids))
-            patient_query += f" WHERE p.company_id IN ({placeholders})"
-            patient_params.extend(matching_company_ids)
-        else:
-            patient_query += " WHERE 1=0"
-
-    patient_query += " ORDER BY p.surname, p.name"
-    cur.execute(patient_query, patient_params)
-    patients = cur.fetchall()
-
-    cur.close()
-    conn.close()
+    finally:
+        cur.close()
+        conn.close()
 
     return render_template(
         "dashboard.html",
@@ -314,29 +329,29 @@ def home():
 def add_company():
     if request.method == "POST":
         name = request.form["name"]
-        address = request.form["address"]
-        phone = request.form["phone"]
+        address = request.form.get("address")
+        phone = request.form.get("phone")
         email = request.form["email"]
 
         conn = get_db_connection()
+        cur = conn.cursor()
         try:
-            cur = conn.cursor()
             cur.execute(
                 "INSERT INTO companies (name, address, phone, email) VALUES (%s, %s, %s, %s)",
                 (name, address, phone, email),
             )
             conn.commit()
             flash("Empresa agregada exitosamente.", "success")
+            return redirect(url_for("home"))
         except IntegrityError:
             conn.rollback()
-            # OJO: si NO tenés un UNIQUE en email, esto no se disparará.
-            flash("Error: El correo electrónico ya existe para otra empresa.", "danger")
+            flash("Error: No se pudo guardar la empresa (IntegrityError).", "danger")
             return (
                 render_template(
                     "company_form.html",
                     company=request.form,
                     form_action_url=url_for("add_company"),
-                    error="El correo electrónico ya existe.",
+                    error="No se pudo guardar la empresa.",
                 ),
                 400,
             )
@@ -344,96 +359,81 @@ def add_company():
             cur.close()
             conn.close()
 
-        return redirect(url_for("home"))
-
     return render_template("company_form.html", form_action_url=url_for("add_company"))
+
 
 @app.route("/edit_company/<int:company_id>", methods=["GET", "POST"])
 @login_required
 def edit_company(company_id):
     conn = get_db_connection()
     cur = conn.cursor()
+    try:
+        if request.method == "POST":
+            name = request.form["name"]
+            address = request.form.get("address")
+            phone = request.form.get("phone")
+            email = request.form["email"]
 
-    if request.method == "POST":
-        name = request.form["name"]
-        address = request.form["address"]
-        phone = request.form["phone"]
-        email = request.form["email"]
+            try:
+                cur.execute(
+                    """
+                    UPDATE companies
+                    SET name = %s, address = %s, phone = %s, email = %s
+                    WHERE id = %s
+                    """,
+                    (name, address, phone, email, company_id),
+                )
+                conn.commit()
+                flash("Empresa actualizada exitosamente.", "success")
+                return redirect(url_for("home"))
+            except IntegrityError:
+                conn.rollback()
+                flash("Error: No se pudo actualizar la empresa (IntegrityError).", "danger")
+                company_data_for_form = dict(request.form)
+                company_data_for_form["id"] = company_id
+                return (
+                    render_template(
+                        "company_form.html",
+                        company=company_data_for_form,
+                        form_action_url=url_for("edit_company", company_id=company_id),
+                        error="No se pudo actualizar la empresa.",
+                    ),
+                    400,
+                )
 
-        try:
-            cur.execute(
-                """
-                UPDATE companies
-                SET name = %s, address = %s, phone = %s, email = %s
-                WHERE id = %s
-                """,
-                (name, address, phone, email, company_id),
-            )
-            conn.commit()
-            flash("Empresa actualizada exitosamente.", "success")
-        except IntegrityError:
-            conn.rollback()
-            flash("Error: El correo electrónico ya existe para otra empresa.", "danger")
-            company_data_for_form = dict(request.form)
-            company_data_for_form["id"] = company_id
-            cur.close()
-            conn.close()
-            return (
-                render_template(
-                    "company_form.html",
-                    company=company_data_for_form,
-                    form_action_url=url_for("edit_company", company_id=company_id),
-                    error="El correo electrónico ya existe.",
-                ),
-                400,
-            )
-        finally:
-            cur.close()
-            conn.close()
+        # GET
+        cur.execute("SELECT * FROM companies WHERE id = %s", (company_id,))
+        company = cur.fetchone()
+        if company is None:
+            flash("Empresa no encontrada.", "warning")
+            return redirect(url_for("home"))
 
-        return redirect(url_for("home"))
+        return render_template(
+            "company_form.html",
+            company=company,
+            form_action_url=url_for("edit_company", company_id=company_id),
+        )
+    finally:
+        cur.close()
+        conn.close()
 
-    cur.execute("SELECT * FROM companies WHERE id = %s", (company_id,))
-    company = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    if company is None:
-        flash("Empresa no encontrada.", "warning")
-        return redirect(url_for("home"))
-
-    return render_template(
-        "company_form.html",
-        company=company,
-        form_action_url=url_for("edit_company", company_id=company_id),
-    )
 
 @app.route("/delete_company/<int:company_id>", methods=["POST"])
 @login_required
 def delete_company(company_id):
     conn = get_db_connection()
     cur = conn.cursor()
-
     try:
-        cur.execute("SELECT id FROM patients WHERE company_id = %s", (company_id,))
-        patient_rows = cur.fetchall()
-        patient_ids = [r["id"] for r in patient_rows]
-
-        if patient_ids:
-            placeholders = ",".join(["%s"] * len(patient_ids))
-            cur.execute(f"DELETE FROM medical_records WHERE patient_id IN ({placeholders})", patient_ids)
-
+        # Borrado robusto (por company_id directo + por patient_id si querés)
+        cur.execute("DELETE FROM medical_records WHERE company_id = %s", (company_id,))
         cur.execute("DELETE FROM patients WHERE company_id = %s", (company_id,))
         cur.execute("DELETE FROM companies WHERE id = %s", (company_id,))
         conn.commit()
-
-        flash("Empresa y todos sus pacientes y registros médicos asociados eliminados exitosamente.", "success")
-
+        flash("Empresa eliminada exitosamente (con pacientes y registros asociados).", "success")
     except Exception as e:
         conn.rollback()
         print(f"Error al eliminar empresa: {e}")
         flash("Error al eliminar la empresa y sus datos asociados.", "danger")
-
     finally:
         cur.close()
         conn.close()
@@ -449,172 +449,153 @@ def delete_company(company_id):
 def add_patient():
     conn = get_db_connection()
     cur = conn.cursor()
+    try:
+        if request.method == "POST":
+            name = request.form["name"]
+            surname = request.form["surname"]
+            document_number = request.form["document_number"]
+            phone = request.form.get("phone")
+            email = request.form.get("email")
+            age_str = request.form.get("age")
+            age = int(age_str) if age_str and age_str.isdigit() else None
+            company_id_str = request.form.get("company_id")
+            company_id = int(company_id_str) if company_id_str and company_id_str.isdigit() else None
 
-    if request.method == "POST":
-        name = request.form["name"]
-        surname = request.form["surname"]
-        document_number = request.form["document_number"]
-        phone = request.form.get("phone")
-        email = request.form.get("email")
-        age_str = request.form.get("age")
-        age = int(age_str) if age_str and age_str.isdigit() else None
-        company_id_str = request.form.get("company_id")
-        company_id = int(company_id_str) if company_id_str and company_id_str.isdigit() else None
+            if not company_id:
+                flash("Error: La empresa debe ser seleccionada.", "danger")
+                cur.execute("SELECT id, name FROM companies ORDER BY name")
+                companies_for_form = cur.fetchall()
+                return render_template(
+                    "patient_form.html",
+                    form_action_url=url_for("add_patient"),
+                    companies=companies_for_form,
+                    error="La empresa debe ser seleccionada.",
+                    patient_data=request.form,
+                )
 
-        if not company_id:
-            flash("Error: La empresa debe ser seleccionada.", "danger")
-            cur.execute("SELECT id, name FROM companies ORDER BY name")
-            companies_for_form = cur.fetchall()
-            cur.close()
-            conn.close()
-            return render_template(
-                "patient_form.html",
-                form_action_url=url_for("add_patient"),
-                companies=companies_for_form,
-                error="La empresa debe ser seleccionada.",
-                patient_data=request.form,
-            )
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO patients (name, surname, document_number, phone, email, age, company_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (name, surname, document_number, phone, email, age, company_id),
+                )
+                conn.commit()
+                flash("Paciente agregado exitosamente.", "success")
+                return redirect(url_for("home"))
+            except IntegrityError as e:
+                conn.rollback()
+                msg = "Error de integridad. Verifique sus datos."
+                if "document_number" in str(e):
+                    msg = "El número de documento ya existe para otro paciente."
+                flash(f"Error: {msg}", "danger")
+                cur.execute("SELECT id, name FROM companies ORDER BY name")
+                companies_for_form = cur.fetchall()
+                return render_template(
+                    "patient_form.html",
+                    form_action_url=url_for("add_patient"),
+                    companies=companies_for_form,
+                    error=msg,
+                    patient_data=request.form,
+                )
 
-        try:
-            cur.execute(
-                """
-                INSERT INTO patients (name, surname, document_number, phone, email, age, company_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (name, surname, document_number, phone, email, age, company_id),
-            )
-            conn.commit()
-            flash("Paciente agregado exitosamente.", "success")
+        # GET
+        cur.execute("SELECT id, name FROM companies ORDER BY name")
+        companies_data = cur.fetchall()
+        return render_template("patient_form.html", companies=companies_data, form_action_url=url_for("add_patient"))
+    finally:
+        cur.close()
+        conn.close()
 
-        except IntegrityError as e:
-            conn.rollback()
-            error_message = "Error de integridad. Verifique sus datos."
-            if "document_number" in str(e):
-                error_message = "El número de documento ya existe para otro paciente."
-            flash(f"Error: {error_message}", "danger")
-
-            cur.execute("SELECT id, name FROM companies ORDER BY name")
-            companies_for_form = cur.fetchall()
-            cur.close()
-            conn.close()
-            return render_template(
-                "patient_form.html",
-                form_action_url=url_for("add_patient"),
-                companies=companies_for_form,
-                error=error_message,
-                patient_data=request.form,
-            )
-
-        finally:
-            cur.close()
-            conn.close()
-
-        return redirect(url_for("home"))
-
-    cur.execute("SELECT id, name FROM companies ORDER BY name")
-    companies_data = cur.fetchall()
-    cur.close()
-    conn.close()
-    return render_template("patient_form.html", companies=companies_data, form_action_url=url_for("add_patient"))
 
 @app.route("/edit_patient/<int:patient_id>", methods=["GET", "POST"])
 @login_required
 def edit_patient(patient_id):
     conn = get_db_connection()
     cur = conn.cursor()
+    try:
+        if request.method == "POST":
+            name = request.form["name"]
+            surname = request.form["surname"]
+            document_number = request.form["document_number"]
+            phone = request.form.get("phone")
+            email = request.form.get("email")
+            age_str = request.form.get("age")
+            age = int(age_str) if age_str and age_str.isdigit() else None
+            company_id_str = request.form.get("company_id")
+            company_id = int(company_id_str) if company_id_str and company_id_str.isdigit() else None
 
-    if request.method == "POST":
-        name = request.form["name"]
-        surname = request.form["surname"]
-        document_number = request.form["document_number"]
-        phone = request.form.get("phone")
-        email = request.form.get("email")
-        age_str = request.form.get("age")
-        age = int(age_str) if age_str and age_str.isdigit() else None
-        company_id_str = request.form.get("company_id")
-        company_id = int(company_id_str) if company_id_str and company_id_str.isdigit() else None
+            if not company_id:
+                flash("Error: La empresa debe ser seleccionada.", "danger")
+                cur.execute("SELECT id, name FROM companies ORDER BY name")
+                companies_for_form = cur.fetchall()
+                current_form_data = dict(request.form)
+                current_form_data["id"] = patient_id
+                return render_template(
+                    "patient_form.html",
+                    patient_data=current_form_data,
+                    companies=companies_for_form,
+                    form_action_url=url_for("edit_patient", patient_id=patient_id),
+                    error="La empresa debe ser seleccionada.",
+                )
 
-        if not company_id:
-            flash("Error: La empresa debe ser seleccionada.", "danger")
-            cur.execute("SELECT id, name FROM companies ORDER BY name")
-            companies_for_form = cur.fetchall()
-            current_form_data = dict(request.form)
-            current_form_data["id"] = patient_id
-            cur.close()
-            conn.close()
-            return render_template(
-                "patient_form.html",
-                patient_data=current_form_data,
-                companies=companies_for_form,
-                form_action_url=url_for("edit_patient", patient_id=patient_id),
-                error="La empresa debe ser seleccionada.",
-            )
+            try:
+                cur.execute(
+                    """
+                    UPDATE patients
+                    SET name=%s, surname=%s, document_number=%s, phone=%s, email=%s, age=%s, company_id=%s
+                    WHERE id=%s
+                    """,
+                    (name, surname, document_number, phone, email, age, company_id, patient_id),
+                )
+                conn.commit()
+                flash("Paciente actualizado exitosamente.", "success")
+                return redirect(url_for("home"))
+            except IntegrityError as e:
+                conn.rollback()
+                msg = "Error de integridad. Verifique sus datos."
+                if "document_number" in str(e):
+                    msg = "El número de documento ya existe para otro paciente."
+                flash(f"Error: {msg}", "danger")
+                cur.execute("SELECT id, name FROM companies ORDER BY name")
+                companies_for_form = cur.fetchall()
+                current_form_data = dict(request.form)
+                current_form_data["id"] = patient_id
+                return render_template(
+                    "patient_form.html",
+                    patient_data=current_form_data,
+                    companies=companies_for_form,
+                    form_action_url=url_for("edit_patient", patient_id=patient_id),
+                    error=msg,
+                )
 
-        try:
-            cur.execute(
-                """
-                UPDATE patients
-                SET name=%s, surname=%s, document_number=%s, phone=%s, email=%s, age=%s, company_id=%s
-                WHERE id=%s
-                """,
-                (name, surname, document_number, phone, email, age, company_id, patient_id),
-            )
-            conn.commit()
-            flash("Paciente actualizado exitosamente.", "success")
+        # GET
+        cur.execute("SELECT * FROM patients WHERE id = %s", (patient_id,))
+        patient_data = cur.fetchone()
+        if patient_data is None:
+            flash("Paciente no encontrado.", "warning")
+            return redirect(url_for("home"))
 
-        except IntegrityError as e:
-            conn.rollback()
-            error_message = "Error de integridad. Verifique sus datos."
-            if "document_number" in str(e):
-                error_message = "El número de documento ya existe para otro paciente."
-            flash(f"Error: {error_message}", "danger")
+        cur.execute("SELECT id, name FROM companies ORDER BY name")
+        companies_data = cur.fetchall()
 
-            cur.execute("SELECT id, name FROM companies ORDER BY name")
-            companies_for_form = cur.fetchall()
-            current_form_data = dict(request.form)
-            current_form_data["id"] = patient_id
-            cur.close()
-            conn.close()
-            return render_template(
-                "patient_form.html",
-                patient_data=current_form_data,
-                companies=companies_for_form,
-                form_action_url=url_for("edit_patient", patient_id=patient_id),
-                error=error_message,
-            )
-
-        finally:
-            cur.close()
-            conn.close()
-
-        return redirect(url_for("home"))
-
-    cur.execute("SELECT * FROM patients WHERE id = %s", (patient_id,))
-    patient_data = cur.fetchone()
-    if patient_data is None:
-        flash("Paciente no encontrado.", "warning")
+        return render_template(
+            "patient_form.html",
+            patient=patient_data,
+            companies=companies_data,
+            form_action_url=url_for("edit_patient", patient_id=patient_id),
+        )
+    finally:
         cur.close()
         conn.close()
-        return redirect(url_for("home"))
 
-    cur.execute("SELECT id, name FROM companies ORDER BY name")
-    companies_data = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    return render_template(
-        "patient_form.html",
-        patient=patient_data,
-        companies=companies_data,
-        form_action_url=url_for("edit_patient", patient_id=patient_id),
-    )
 
 @app.route("/delete_patient/<int:patient_id>", methods=["POST"])
 @login_required
 def delete_patient(patient_id):
     conn = get_db_connection()
     cur = conn.cursor()
-
     try:
         cur.execute("DELETE FROM medical_records WHERE patient_id = %s", (patient_id,))
         cur.execute("DELETE FROM patients WHERE id = %s", (patient_id,))
@@ -630,15 +611,6 @@ def delete_patient(patient_id):
 
     return redirect(url_for("home"))
 
-def get_patient_company_id(patient_id):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT company_id FROM patients WHERE id = %s", (patient_id,))
-    result = cur.fetchone()
-    cur.close()
-    conn.close()
-    return result["company_id"] if result else None
-
 
 # ----------------------------
 # Medical Records
@@ -648,349 +620,323 @@ def get_patient_company_id(patient_id):
 def add_medical_record():
     conn = get_db_connection()
     cur = conn.cursor()
+    try:
+        if request.method == "POST":
+            action = request.form.get("action")
+            patient_id_form = request.form.get("patient_id", type=int)
+            diagnosis = request.form["diagnosis"]
+            visit_date = parse_date(request.form["date"])
 
-    if request.method == "POST":
-        action = request.form.get("action")  # save o save_and_send
+            license_type_list = request.form.getlist("license_type")
+            license_type = ", ".join(license_type_list) if license_type_list else None
 
-        patient_id_form = request.form.get("patient_id", type=int)
-        diagnosis = request.form["diagnosis"]
-        visit_date = parse_date(request.form["date"])
+            justified_days = request.form.get("justified_days", type=int)
+            license_start = parse_date(request.form.get("license_start"))
+            license_end = parse_date(request.form.get("license_end"))
+            return_date = parse_date(request.form.get("return_date"))
+            observations = request.form.get("observations")
 
-        license_type_list = request.form.getlist("license_type")
-        license_type = ", ".join(license_type_list) if license_type_list else None
+            if not patient_id_form:
+                flash("Error: El paciente debe ser seleccionado.", "danger")
+                cur.execute("SELECT id, name, surname, document_number FROM patients ORDER BY surname, name")
+                patients_for_form = cur.fetchall()
+                return render_template(
+                    "medical_record_form.html",
+                    patients=patients_for_form,
+                    form_action_url=url_for("add_medical_record"),
+                    error="El paciente debe ser seleccionado.",
+                    record_data=request.form,
+                )
 
-        justified_days = request.form.get("justified_days", type=int)
-        license_start = parse_date(request.form.get("license_start"))
-        license_end = parse_date(request.form.get("license_end"))
-        return_date = parse_date(request.form.get("return_date"))
-        observations = request.form.get("observations")
+            company_id = get_patient_company_id(patient_id_form)
+            if company_id is None:
+                flash("Error: El paciente seleccionado no tiene una empresa asociada.", "danger")
+                cur.execute("SELECT id, name, surname, document_number FROM patients ORDER BY surname, name")
+                patients_for_form = cur.fetchall()
+                return render_template(
+                    "medical_record_form.html",
+                    patients=patients_for_form,
+                    form_action_url=url_for("add_medical_record"),
+                    error="El paciente seleccionado no tiene una empresa asociada.",
+                    record_data=request.form,
+                )
 
-        if not patient_id_form:
-            flash("Error: El paciente debe ser seleccionado.", "danger")
-            cur.execute("SELECT id, name, surname, document_number FROM patients ORDER BY surname, name")
-            patients_for_form = cur.fetchall()
-            cur.close()
-            conn.close()
-            return render_template(
-                "medical_record_form.html",
-                patients=patients_for_form,
-                form_action_url=url_for("add_medical_record"),
-                error="El paciente debe ser seleccionado.",
-                record_data=request.form,
-            )
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO medical_records
+                      (patient_id, diagnosis, date, company_id, license_type, justified_days, license_start, license_end, return_date, observations)
+                    VALUES
+                      (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        patient_id_form,
+                        diagnosis,
+                        visit_date,
+                        company_id,
+                        license_type,
+                        justified_days,
+                        license_start,
+                        license_end,
+                        return_date,
+                        observations,
+                    ),
+                )
+                new_record_id = cur.fetchone()["id"]
+                conn.commit()
+                flash("Registro médico agregado exitosamente.", "success")
+            except Exception as e:
+                conn.rollback()
+                print(f"Error al agregar registro médico: {e}")
+                flash(f"Error al agregar el registro médico: {e}", "danger")
+                cur.execute("SELECT id, name, surname, document_number FROM patients ORDER BY surname, name")
+                patients_for_form = cur.fetchall()
+                return render_template(
+                    "medical_record_form.html",
+                    patients=patients_for_form,
+                    form_action_url=url_for("add_medical_record"),
+                    error=f"Ocurrió un error: {e}",
+                    record_data=request.form,
+                )
 
-        company_id = get_patient_company_id(patient_id_form)
-        if company_id is None:
-            flash("Error: El paciente seleccionado no tiene una empresa asociada.", "danger")
-            cur.execute("SELECT id, name, surname, document_number FROM patients ORDER BY surname, name")
-            patients_for_form = cur.fetchall()
-            cur.close()
-            conn.close()
-            return render_template(
-                "medical_record_form.html",
-                patients=patients_for_form,
-                form_action_url=url_for("add_medical_record"),
-                error="El paciente seleccionado no tiene una empresa asociada.",
-                record_data=request.form,
-            )
+            if action == "save_and_send":
+                if not is_smtp_configured():
+                    flash("No se puede enviar email: faltan variables SMTP.", "warning")
+                else:
+                    success = send_medical_record_email(new_record_id)
+                    flash("Correo enviado exitosamente." if success else "Error al enviar el correo.",
+                          "success" if success else "danger")
 
-        try:
-            cur.execute(
-                """
-                INSERT INTO medical_records
-                  (patient_id, diagnosis, date, company_id, license_type, justified_days, license_start, license_end, return_date, observations)
-                VALUES
-                  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                (
-                    patient_id_form,
-                    diagnosis,
-                    visit_date,
-                    company_id,
-                    license_type,
-                    justified_days,
-                    license_start,
-                    license_end,
-                    return_date,
-                    observations,
-                ),
-            )
-            new_record_id = cur.fetchone()["id"]
-            conn.commit()
-            flash("Registro médico agregado exitosamente.", "success")
-        except Exception as e:
-            conn.rollback()
-            print(f"Error al agregar registro médico: {e}")
-            flash(f"Error al agregar el registro médico: {e}", "danger")
-            cur.execute("SELECT id, name, surname, document_number FROM patients ORDER BY surname, name")
-            patients_for_form = cur.fetchall()
-            cur.close()
-            conn.close()
-            return render_template(
-                "medical_record_form.html",
-                patients=patients_for_form,
-                form_action_url=url_for("add_medical_record"),
-                error=f"Ocurrió un error: {e}",
-                record_data=request.form,
-            )
-        finally:
-            cur.close()
-            conn.close()
+            # volver al historial del paciente
+            cur.execute("SELECT document_number FROM patients WHERE id = %s", (patient_id_form,))
+            row = cur.fetchone()
+            if row:
+                return redirect(url_for("home", search_patient_document=row["document_number"]))
+            return redirect(url_for("home"))
 
-        if action == "save_and_send":
-            if not is_smtp_configured():
-                flash("No se puede enviar email: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD).", "warning")
-            else:
-                success = send_medical_record_email(new_record_id)
-                flash("Correo enviado exitosamente." if success else "Error al enviar el correo.", "success" if success else "danger")
+        # GET
+        cur.execute("SELECT id, name, surname, document_number FROM patients ORDER BY surname, name")
+        patients_data = cur.fetchall()
+        return render_template(
+            "medical_record_form.html",
+            patients=patients_data,
+            form_action_url=url_for("add_medical_record"),
+            current_date=get_today_iso(),
+        )
+    finally:
+        cur.close()
+        conn.close()
 
-        patient_doc_conn = get_db_connection()
-        doc_cur = patient_doc_conn.cursor()
-        doc_cur.execute("SELECT document_number FROM patients WHERE id = %s", (patient_id_form,))
-        patient_doc_num_row = doc_cur.fetchone()
-        doc_cur.close()
-        patient_doc_conn.close()
-
-        if patient_doc_num_row:
-            return redirect(url_for("home", search_patient_document=patient_doc_num_row["document_number"]))
-        return redirect(url_for("home"))
-
-    cur.execute("SELECT id, name, surname, document_number FROM patients ORDER BY surname, name")
-    patients_data = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    return render_template(
-        "medical_record_form.html",
-        patients=patients_data,
-        form_action_url=url_for("add_medical_record"),
-        current_date=get_today_iso(),
-    )
 
 @app.route("/add_medical_record/<int:patient_id>", methods=["GET", "POST"])
 @login_required
 def add_medical_record_for_patient(patient_id):
     conn = get_db_connection()
     cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT p.*, c.name as company_name
+            FROM patients p
+            LEFT JOIN companies c ON p.company_id = c.id
+            WHERE p.id = %s
+            """,
+            (patient_id,),
+        )
+        patient = cur.fetchone()
 
-    cur.execute(
-        """
-        SELECT p.*, c.name as company_name
-        FROM patients p
-        LEFT JOIN companies c ON p.company_id = c.id
-        WHERE p.id = %s
-        """,
-        (patient_id,),
-    )
-    patient = cur.fetchone()
+        if not patient:
+            flash("Paciente no encontrado.", "warning")
+            return redirect(url_for("home"))
 
-    if not patient:
-        flash("Paciente no encontrado.", "warning")
+        if request.method == "POST":
+            diagnosis = request.form["diagnosis"]
+            visit_date = parse_date(request.form["date"])
+            company_id = patient["company_id"]
+
+            license_type_list = request.form.getlist("license_type")
+            license_type = ", ".join(license_type_list) if license_type_list else None
+
+            justified_days = request.form.get("justified_days", type=int)
+            license_start = parse_date(request.form.get("license_start"))
+            license_end = parse_date(request.form.get("license_end"))
+            return_date = parse_date(request.form.get("return_date"))
+            observations = request.form.get("observations")
+
+            if not company_id:
+                flash("Error: La información de la empresa del paciente está incompleta.", "danger")
+                return render_template(
+                    "medical_record_form.html",
+                    patient=patient,
+                    company_name=patient.get("company_name"),
+                    form_action_url=url_for("add_medical_record_for_patient", patient_id=patient_id),
+                    error="La información de la empresa del paciente está incompleta.",
+                    record_data=request.form,
+                )
+
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO medical_records
+                      (patient_id, diagnosis, date, company_id, license_type, justified_days, license_start, license_end, return_date, observations)
+                    VALUES
+                      (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        patient_id,
+                        diagnosis,
+                        visit_date,
+                        company_id,
+                        license_type,
+                        justified_days,
+                        license_start,
+                        license_end,
+                        return_date,
+                        observations,
+                    ),
+                )
+                record_id = cur.fetchone()["id"]
+                conn.commit()
+
+                if request.form.get("action") == "save_and_send":
+                    if not is_smtp_configured():
+                        flash("No se puede enviar email: faltan variables SMTP.", "warning")
+                    else:
+                        ok = send_medical_record_email(record_id)
+                        flash("Registro médico agregado y enviado por correo." if ok else "No se pudo enviar el correo.",
+                              "success" if ok else "danger")
+                else:
+                    flash("Registro médico agregado exitosamente para el paciente.", "success")
+
+            except Exception as e:
+                conn.rollback()
+                print(f"Error al agregar registro médico para paciente {patient_id}: {e}")
+                flash(f"Error al agregar el registro médico: {e}", "danger")
+                return render_template(
+                    "medical_record_form.html",
+                    patient=patient,
+                    company_name=patient.get("company_name"),
+                    form_action_url=url_for("add_medical_record_for_patient", patient_id=patient_id),
+                    error=f"Ocurrió un error: {e}",
+                    record_data=request.form,
+                )
+
+            return redirect(url_for("home", search_patient_document=patient["document_number"]))
+
+        return render_template(
+            "medical_record_form.html",
+            patient=patient,
+            company_name=patient.get("company_name"),
+            form_action_url=url_for("add_medical_record_for_patient", patient_id=patient_id),
+            current_date=get_today_iso(),
+        )
+    finally:
         cur.close()
         conn.close()
-        return redirect(url_for("home"))
 
-    if request.method == "POST":
-        diagnosis = request.form["diagnosis"]
-        visit_date = parse_date(request.form["date"])
-        company_id = patient["company_id"]
-
-        license_type_list = request.form.getlist("license_type")
-        license_type = ", ".join(license_type_list) if license_type_list else None
-
-        justified_days = request.form.get("justified_days", type=int)
-        license_start = parse_date(request.form.get("license_start"))
-        license_end = parse_date(request.form.get("license_end"))
-        return_date = parse_date(request.form.get("return_date"))
-        observations = request.form.get("observations")
-
-        if not company_id:
-            flash("Error: La información de la empresa del paciente está incompleta.", "danger")
-            cur.close()
-            conn.close()
-            return render_template(
-                "medical_record_form.html",
-                patient=patient,
-                company_name=patient.get("company_name"),
-                form_action_url=url_for("add_medical_record_for_patient", patient_id=patient_id),
-                error="La información de la empresa del paciente está incompleta.",
-                record_data=request.form,
-            )
-
-        try:
-            cur.execute(
-                """
-                INSERT INTO medical_records
-                  (patient_id, diagnosis, date, company_id, license_type, justified_days, license_start, license_end, return_date, observations)
-                VALUES
-                  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                (
-                    patient_id,
-                    diagnosis,
-                    visit_date,
-                    company_id,
-                    license_type,
-                    justified_days,
-                    license_start,
-                    license_end,
-                    return_date,
-                    observations,
-                ),
-            )
-            record_id = cur.fetchone()["id"]
-            conn.commit()
-
-            if request.form.get("action") == "save_and_send":
-                if not is_smtp_configured():
-                    flash("No se puede enviar email: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD).", "warning")
-                else:
-                    send_medical_record_email(record_id)
-                    flash("Registro médico agregado y enviado por correo.", "success")
-            else:
-                flash("Registro médico agregado exitosamente para el paciente.", "success")
-
-        except Exception as e:
-            conn.rollback()
-            print(f"Error al agregar registro médico para paciente {patient_id}: {e}")
-            flash(f"Error al agregar el registro médico: {e}", "danger")
-            cur.close()
-            conn.close()
-            return render_template(
-                "medical_record_form.html",
-                patient=patient,
-                company_name=patient.get("company_name"),
-                form_action_url=url_for("add_medical_record_for_patient", patient_id=patient_id),
-                error=f"Ocurrió un error: {e}",
-                record_data=request.form,
-            )
-        finally:
-            cur.close()
-            conn.close()
-
-        return redirect(url_for("home", search_patient_document=patient["document_number"]))
-
-    cur.close()
-    conn.close()
-    return render_template(
-        "medical_record_form.html",
-        patient=patient,
-        company_name=patient.get("company_name"),
-        form_action_url=url_for("add_medical_record_for_patient", patient_id=patient_id),
-        current_date=get_today_iso(),
-    )
 
 @app.route("/edit_medical_record/<int:record_id>", methods=["GET", "POST"])
 @login_required
 def edit_medical_record(record_id):
     conn = get_db_connection()
     cur = conn.cursor()
+    try:
+        if request.method == "POST":
+            diagnosis = request.form["diagnosis"]
+            visit_date = parse_date(request.form["date"])
 
-    if request.method == "POST":
-        diagnosis = request.form["diagnosis"]
-        visit_date = parse_date(request.form["date"])
-        license_type_list = request.form.getlist("license_type")
-        license_type = ", ".join(license_type_list) if license_type_list else None
+            license_type_list = request.form.getlist("license_type")
+            license_type = ", ".join(license_type_list) if license_type_list else None
 
-        justified_days = request.form.get("justified_days", type=int)
-        license_start = parse_date(request.form.get("license_start"))
-        license_end = parse_date(request.form.get("license_end"))
-        return_date = parse_date(request.form.get("return_date"))
-        observations = request.form.get("observations")
+            justified_days = request.form.get("justified_days", type=int)
+            license_start = parse_date(request.form.get("license_start"))
+            license_end = parse_date(request.form.get("license_end"))
+            return_date = parse_date(request.form.get("return_date"))
+            observations = request.form.get("observations")
 
-        cur.execute("SELECT patient_id FROM medical_records WHERE id = %s", (record_id,))
-        record_for_redirect = cur.fetchone()
+            cur.execute("SELECT patient_id FROM medical_records WHERE id = %s", (record_id,))
+            record_for_redirect = cur.fetchone()
 
-        try:
-            cur.execute(
-                """
-                UPDATE medical_records
-                SET diagnosis=%s, date=%s, license_type=%s, justified_days=%s,
-                    license_start=%s, license_end=%s, return_date=%s, observations=%s
-                WHERE id=%s
-                """,
-                (
-                    diagnosis,
-                    visit_date,
-                    license_type,
-                    justified_days,
-                    license_start,
-                    license_end,
-                    return_date,
-                    observations,
-                    record_id,
-                ),
-            )
-            conn.commit()
-            flash("Registro médico actualizado exitosamente.", "success")
-        except Exception as e:
-            conn.rollback()
-            print(f"Error al actualizar registro médico: {e}")
-            flash(f"Error al actualizar el registro médico: {e}", "danger")
-        finally:
-            cur.close()
-            conn.close()
+            try:
+                cur.execute(
+                    """
+                    UPDATE medical_records
+                    SET diagnosis=%s, date=%s, license_type=%s, justified_days=%s,
+                        license_start=%s, license_end=%s, return_date=%s, observations=%s
+                    WHERE id=%s
+                    """,
+                    (
+                        diagnosis,
+                        visit_date,
+                        license_type,
+                        justified_days,
+                        license_start,
+                        license_end,
+                        return_date,
+                        observations,
+                        record_id,
+                    ),
+                )
+                conn.commit()
+                flash("Registro médico actualizado exitosamente.", "success")
+            except Exception as e:
+                conn.rollback()
+                print(f"Error al actualizar registro médico: {e}")
+                flash(f"Error al actualizar el registro médico: {e}", "danger")
 
-        if record_for_redirect:
-            patient_conn_redirect = get_db_connection()
-            pc = patient_conn_redirect.cursor()
-            pc.execute("SELECT document_number FROM patients WHERE id = %s", (record_for_redirect["patient_id"],))
-            patient_info_redirect = pc.fetchone()
-            pc.close()
-            patient_conn_redirect.close()
-            if patient_info_redirect:
-                return redirect(url_for("home", search_patient_document=patient_info_redirect["document_number"]))
+            if record_for_redirect:
+                cur.execute("SELECT document_number FROM patients WHERE id = %s", (record_for_redirect["patient_id"],))
+                p = cur.fetchone()
+                if p:
+                    return redirect(url_for("home", search_patient_document=p["document_number"]))
+            return redirect(url_for("home"))
 
-        return redirect(url_for("home"))
+        # GET
+        cur.execute(
+            """
+            SELECT mr.*,
+                   p.name as patient_name,
+                   p.surname as patient_surname,
+                   p.document_number as patient_document_number,
+                   c.name as company_name
+            FROM medical_records mr
+            JOIN patients p ON mr.patient_id = p.id
+            LEFT JOIN companies c ON mr.company_id = c.id
+            WHERE mr.id = %s
+            """,
+            (record_id,),
+        )
+        record = cur.fetchone()
+        if record is None:
+            flash("Registro médico no encontrado.", "warning")
+            return redirect(url_for("home"))
 
-    cur.execute(
-        """
-        SELECT mr.*,
-               p.name as patient_name,
-               p.surname as patient_surname,
-               p.document_number as patient_document_number,
-               c.name as company_name
-        FROM medical_records mr
-        JOIN patients p ON mr.patient_id = p.id
-        LEFT JOIN companies c ON mr.company_id = c.id
-        WHERE mr.id = %s
-        """,
-        (record_id,),
-    )
-    record = cur.fetchone()
-    if record is None:
-        flash("Registro médico no encontrado.", "warning")
+        patient_details = {
+            "name": record["patient_name"],
+            "surname": record["patient_surname"],
+            "document_number": record["patient_document_number"],
+        }
+        company_details = {"name": record.get("company_name")}
+
+        return render_template(
+            "medical_record_form.html",
+            record=record,
+            patient_details=patient_details,
+            company_details=company_details,
+            form_action_url=url_for("edit_medical_record", record_id=record_id),
+        )
+    finally:
         cur.close()
         conn.close()
-        return redirect(url_for("home"))
 
-    patient_details = {
-        "name": record["patient_name"],
-        "surname": record["patient_surname"],
-        "document_number": record["patient_document_number"],
-    }
-    company_details = {"name": record.get("company_name")}
-
-    cur.close()
-    conn.close()
-
-    return render_template(
-        "medical_record_form.html",
-        record=record,
-        patient_details=patient_details,
-        company_details=company_details,
-        form_action_url=url_for("edit_medical_record", record_id=record_id),
-    )
 
 @app.route("/delete_medical_record/<int:record_id>", methods=["POST"])
 @login_required
 def delete_medical_record(record_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    patient_doc_for_redirect = None
-
     try:
         cur.execute(
             """
@@ -1002,68 +948,56 @@ def delete_medical_record(record_id):
             (record_id,),
         )
         patient_info = cur.fetchone()
-        if patient_info:
-            patient_doc_for_redirect = patient_info["document_number"]
+        patient_doc = patient_info["document_number"] if patient_info else None
 
         cur.execute("DELETE FROM medical_records WHERE id = %s", (record_id,))
         conn.commit()
         flash("Registro médico eliminado exitosamente.", "success")
+
+        if patient_doc:
+            return redirect(url_for("home", search_patient_document=patient_doc))
+        return redirect(url_for("home"))
     except Exception as e:
         conn.rollback()
         print(f"Error al eliminar registro médico: {e}")
         flash("Error al eliminar el registro médico.", "danger")
+        return redirect(url_for("home"))
     finally:
         cur.close()
         conn.close()
 
-    if patient_doc_for_redirect:
-        return redirect(url_for("home", search_patient_document=patient_doc_for_redirect))
-    return redirect(url_for("home"))
-
 
 # ----------------------------
-# PDF (NO CAMBIAR – dejé tus funciones tal cual en tu repo)
+# PDF
 # ----------------------------
 def build_pdf_from_record(record):
-    # --- Header / Footer sizes ---
     HEADER_H = 42
-    FOOTER_H = 32  # probá 45 / 50
+    FOOTER_H = 32
+    FOOTER_OFFSET = 8
 
     pdf = FPDF(format="A4", unit="mm")
-
-    # Reservar espacio para que el texto no pise el footer (ANTES de add_page)
-    FOOTER_OFFSET = 8  # mm hacia arriba
     pdf.set_auto_page_break(auto=True, margin=FOOTER_H + FOOTER_OFFSET + 6)
-
     pdf.add_page()
 
-    # --- Medidas hoja A4 ---
-    PAGE_W = pdf.w  # 210
-    PAGE_H = pdf.h  # 297
+    PAGE_W = pdf.w
+    PAGE_H = pdf.h
 
-    # --- Colores ---
     title_color = (33, 37, 104)
     field_color = (0, 0, 0)
     line_color = (86, 189, 181)
 
-    # =========================
-    # HEADER (full width)
-    # =========================
     header_path = static_path("img", "header.jpg")
     if os.path.exists(header_path):
         pdf.image(header_path, x=0, y=0, w=PAGE_W)
 
-    # Arranca contenido más abajo
     CONTENT_TOP = HEADER_H + 20
     pdf.set_y(CONTENT_TOP)
 
-    # Márgenes del contenido
     LEFT = 18
     RIGHT = 18
     pdf.set_left_margin(LEFT)
     pdf.set_right_margin(RIGHT)
 
-    # Helpers
     def hline(y):
         pdf.set_draw_color(*line_color)
         pdf.set_line_width(0.8)
@@ -1103,15 +1037,12 @@ def build_pdf_from_record(record):
             if isinstance(s, (datetime.date, datetime.datetime)):
                 d = s.date() if isinstance(s, datetime.datetime) else s
                 return d.strftime("%d/%m/%Y")
+            s = str(s)
             return f"{s[8:10]}/{s[5:7]}/{s[0:4]}"
         except Exception:
             return str(s)
 
-    # =========================
-    # CONTENIDO
-    # =========================
     y = pdf.get_y()
-
     hline(y); y += 3
     y = label_value("EMPRESA:", record.get("company_name", ""), y=y, label_w=28)
     y += 2
@@ -1165,18 +1096,41 @@ def build_pdf_from_record(record):
     pdf.set_text_color(*field_color)
     pdf.multi_cell(desc_w, 6, record.get("observations", "") or "", border=0)
 
-    # =========================
-    # FOOTER (fijo abajo)
-    # =========================
     footer_path = static_path("img", "footer.jpg")
     if os.path.exists(footer_path):
         footer_y = PAGE_H - FOOTER_H - FOOTER_OFFSET
-
-        # recomendado: NO forzar h para que no se deforme
         pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W, h=FOOTER_H)
+
     return pdf.output(dest="S").encode("latin-1")
 
 
+def generate_medical_record_pdf(record_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT mr.*,
+                   p.name AS patient_name,
+                   p.surname AS patient_surname,
+                   p.document_number,
+                   c.name AS company_name,
+                   c.email AS company_email
+            FROM medical_records mr
+            JOIN patients p ON mr.patient_id = p.id
+            JOIN companies c ON mr.company_id = c.id
+            WHERE mr.id = %s
+            """,
+            (record_id,),
+        )
+        record = cur.fetchone()
+        if not record:
+            print(f"No se encontraron datos para el registro {record_id}")
+            return None
+        return build_pdf_from_record(record)
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.route("/medical_record/<int:record_id>/pdf")
@@ -1200,32 +1154,6 @@ def download_medical_record_pdf(record_id):
         max_age=0,
     )
 
-def generate_medical_record_pdf(record_id):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    query = """
-        SELECT mr.*,
-               p.name AS patient_name,
-               p.surname AS patient_surname,
-               p.document_number,
-               c.name AS company_name,
-               c.email AS company_email
-        FROM medical_records mr
-        JOIN patients p ON mr.patient_id = p.id
-        JOIN companies c ON mr.company_id = c.id
-        WHERE mr.id = %s
-    """
-    cur.execute(query, (record_id,))
-    record = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    if not record:
-        print(f"No se encontraron datos para el registro {record_id}")
-        return None
-
-    return build_pdf_from_record(record)
-
 
 # ----------------------------
 # Email single record
@@ -1233,26 +1161,30 @@ def generate_medical_record_pdf(record_id):
 def send_medical_record_email(record_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    query = """
-        SELECT mr.id as record_id,
-               mr.date as record_date,
-               p.name as patient_name,
-               p.surname as patient_surname,
-               p.document_number,
-               c.name as company_name,
-               c.email as company_email
-        FROM medical_records mr
-        JOIN patients p ON mr.patient_id = p.id
-        JOIN companies c ON mr.company_id = c.id
-        WHERE mr.id = %s
-    """
-    cur.execute(query, (record_id,))
-    data = cur.fetchone()
-    cur.close()
-    conn.close()
+    try:
+        cur.execute(
+            """
+            SELECT mr.id as record_id,
+                   mr.date as record_date,
+                   p.name as patient_name,
+                   p.surname as patient_surname,
+                   p.document_number,
+                   c.name as company_name,
+                   c.email as company_email
+            FROM medical_records mr
+            JOIN patients p ON mr.patient_id = p.id
+            JOIN companies c ON mr.company_id = c.id
+            WHERE mr.id = %s
+            """,
+            (record_id,),
+        )
+        data = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
 
     if not data or not data.get("company_email"):
-        print(f"Correo no enviado: datos no encontrados o correo de empresa faltante para registro {record_id}.")
+        print(f"Correo no enviado: datos no encontrados o correo faltante para registro {record_id}.")
         return False
 
     pdf_content = generate_medical_record_pdf(record_id)
@@ -1266,7 +1198,7 @@ def send_medical_record_email(record_id):
         return False
 
     msg = MIMEMultipart()
-    msg["Subject"] = f"Informe Médico del Paciente: {data['patient_name']} {data['patient_surname']} ({data['record_date']})"
+    msg["Subject"] = f"Informe Médico: {data['patient_name']} {data['patient_surname']} ({data['record_date']})"
     msg["From"] = EMAIL_SENDER
     msg["To"] = ", ".join(recipients)
 
@@ -1292,78 +1224,80 @@ def send_medical_record_email(record_id):
             server.starttls(context=context)
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.sendmail(EMAIL_SENDER, recipients, msg.as_string())
-        print(f"Correo para registro {record_id} enviado exitosamente a {data['company_email']}.")
+        print(f"Correo para registro {record_id} enviado a {data['company_email']}.")
         return True
     except Exception as e:
         print(f"Error al enviar correo para registro {record_id}: {e}")
         return False
+
 
 @app.route("/medical_record/<int:record_id>/send_email", methods=["POST"])
 @login_required
 def email_medical_record(record_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT p.document_number, c.email as company_email, c.name as company_name
-        FROM medical_records mr
-        JOIN patients p ON mr.patient_id = p.id
-        JOIN companies c ON mr.company_id = c.id
-        WHERE mr.id = %s
-        """,
-        (record_id,),
-    )
-    info = cur.fetchone()
-    cur.close()
-    conn.close()
+    try:
+        cur.execute(
+            """
+            SELECT p.document_number, c.email as company_email, c.name as company_name
+            FROM medical_records mr
+            JOIN patients p ON mr.patient_id = p.id
+            JOIN companies c ON mr.company_id = c.id
+            WHERE mr.id = %s
+            """,
+            (record_id,),
+        )
+        info = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
 
     patient_document_number = info["document_number"] if info else None
     company_email_display = info["company_email"] if info and info.get("company_email") else None
     company_name_display = info["company_name"] if info and info.get("company_name") else "la empresa (nombre no encontrado)"
 
     if not company_email_display:
-        flash(f"No se pudo enviar el correo: Email de la empresa '{company_name_display}' no encontrado para el registro {record_id}.", "danger")
+        flash(f"No se pudo enviar el correo: Email de la empresa '{company_name_display}' no encontrado.", "danger")
         return redirect(url_for("home", search_patient_document=patient_document_number or ""))
 
-    # Ajuste que tenías en la versión vieja: si SMTP no está configurado, avisar y NO intentar enviar
     if not is_smtp_configured():
-        flash("La configuración SMTP no está completa (SMTP_USERNAME/SMTP_PASSWORD). Configurala en Cloud Run y reintenta.", "warning")
+        flash("La configuración SMTP no está completa.", "warning")
         return redirect(url_for("home", search_patient_document=patient_document_number or ""))
 
     success = send_medical_record_email(record_id)
-    if success:
-        flash(f"Correo enviado exitosamente a {company_email_display} ({company_name_display}).", "success")
-    else:
-        flash(f"Error al enviar el correo a {company_email_display} ({company_name_display}). Verifique la configuración y el log del servidor.", "danger")
-
+    flash(
+        f"Correo enviado exitosamente a {company_email_display} ({company_name_display})." if success
+        else f"Error al enviar el correo a {company_email_display} ({company_name_display}).",
+        "success" if success else "danger",
+    )
     return redirect(url_for("home", search_patient_document=patient_document_number or ""))
 
 
 # ----------------------------
 # Daily send (select companies + send grouped PDFs)
 # ----------------------------
-@app.route("/send_daily_reports/select_companies", methods=["GET", "POST"])
+@app.route("/send_daily_reports/select_companies", methods=["GET"])
 @login_required
 def select_companies_for_daily_send():
     conn = get_db_connection()
     cur = conn.cursor()
+    try:
+        today = datetime.date.today()
+        cur.execute(
+            """
+            SELECT DISTINCT c.id, c.name, c.email
+            FROM medical_records mr
+            JOIN companies c ON mr.company_id = c.id
+            WHERE DATE(mr.created_at) = %s
+            """,
+            (today,),
+        )
+        companies = cur.fetchall()
+        return render_template("select_companies_send.html", companies=companies, today=today)
+    finally:
+        cur.close()
+        conn.close()
 
-    today = datetime.date.today()
-    cur.execute(
-        """
-        SELECT DISTINCT c.id, c.name, c.email
-        FROM medical_records mr
-        JOIN companies c ON mr.company_id = c.id
-        WHERE DATE(mr.created_at) = %s
-        """,
-        (today,),
-    )
-    companies = cur.fetchall()
-
-    cur.close()
-    conn.close()
-
-    return render_template("select_companies_send.html", companies=companies, today=today)
 
 @app.route("/send_daily_reports", methods=["POST"])
 @login_required
@@ -1374,28 +1308,27 @@ def send_daily_reports():
         return redirect(url_for("select_companies_for_daily_send"))
 
     if not is_smtp_configured():
-        flash("No se puede enviar emails: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD).", "warning")
+        flash("No se puede enviar emails: faltan variables SMTP.", "warning")
         return redirect(url_for("select_companies_for_daily_send"))
 
     today = datetime.date.today()
 
     conn = get_db_connection()
     cur = conn.cursor()
-
-    placeholders = ",".join(["%s"] * len(selected_company_ids))
-    query = f"""
-    SELECT mr.id, c.email as company_email, c.name as company_name
-    FROM medical_records mr
-    JOIN companies c ON mr.company_id = c.id
-    WHERE mr.company_id IN ({placeholders}) AND DATE(mr.created_at) = %s
-    """
-    params = [*selected_company_ids, today]
-
-    cur.execute(query, params)
-    records = cur.fetchall()
-
-    cur.close()
-    conn.close()
+    try:
+        placeholders = ",".join(["%s"] * len(selected_company_ids))
+        query = f"""
+        SELECT mr.id, c.email as company_email, c.name as company_name
+        FROM medical_records mr
+        JOIN companies c ON mr.company_id = c.id
+        WHERE mr.company_id IN ({placeholders}) AND DATE(mr.created_at) = %s
+        """
+        params = [*selected_company_ids, today]
+        cur.execute(query, params)
+        records = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
 
     grouped_records = defaultdict(list)
     for r in records:
@@ -1410,12 +1343,13 @@ def send_daily_reports():
 
         if attachments:
             success = send_multiple_pdfs_email(email, name, attachments)
-            if success:
-                flash(f"Correo enviado a {email} ({name}) con {len(attachments)} registros.", "success")
-            else:
-                flash(f"Error al enviar correo a {email}.", "danger")
+            flash(
+                f"Correo enviado a {email} ({name}) con {len(attachments)} registros." if success else f"Error al enviar correo a {email}.",
+                "success" if success else "danger",
+            )
 
     return redirect(url_for("home"))
+
 
 def send_multiple_pdfs_email(to_email, company_name, attachments):
     recipients = [e.strip() for e in (to_email or "").split(",") if e.strip()]
