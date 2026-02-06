@@ -1045,6 +1045,10 @@ def build_pdf_from_record(record):
     # Ajustá estos valores a tu imagen real
     HEADER_H = 28  # altura del header en mm (probá 22-35)
     if os.path.exists(header_img):
+        print("BASE_DIR:", BASE_DIR)
+print("Header path:", header_img, "exists:", os.path.exists(header_img))
+print("Footer path:", footer_img, "exists:", os.path.exists(footer_img))
+
         pdf.image(header_img, x=0, y=0, w=210, h=HEADER_H)  # A4 ancho 210mm
 
     # --- FOOTER ---
