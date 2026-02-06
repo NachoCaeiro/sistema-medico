@@ -1045,8 +1045,9 @@ def build_pdf_from_record(record):
     footer_img = static_path("img", "footer.jpg")
 
     if os.path.exists(footer_img):
-    footer_y = pdf.h - 35   # ajustá 35 según qué tan alto sea tu footer
-    pdf.image(footer_img, x=10, y=footer_y, w=190)
+    footer_width = 120  # probá entre 110 y 140 según gusto
+    x_centered = (210 - footer_width) / 2
+    pdf.image(footer_img, x=x_centered, y=255, w=footer_width)
     else:
         pdf.ln(10)
 
