@@ -1078,25 +1078,35 @@ def build_pdf_from_record(record):
         pdf.set_line_width(0.8)
         pdf.line(LEFT, y, PAGE_W - RIGHT, y)
 
-    def label_value(label, value, y=None, label_w=45, gap=2, font_size=11):
-        if y is not None:
-            pdf.set_y(y)
+    def label_value(label, value, y=None, label_w=45, gap=2, font_size=11, line_h=5):
+    if y is not None:
+        pdf.set_y(y)
 
-        x0 = LEFT
-        y0 = pdf.get_y()
+    x0 = LEFT
+    y0 = pdf.get_y()
 
-        pdf.set_xy(x0, y0)
-        pdf.set_font("Arial", "B", font_size)
-        pdf.set_text_color(*title_color)
-        pdf.cell(label_w, 6, label, border=0)
+    # Label
+    pdf.set_xy(x0, y0)
+    pdf.set_font("Arial", "B", font_size)
+    pdf.set_text_color(*title_color)
+    pdf.cell(label_w, line_h, label, border=0)
 
-        pdf.set_xy(x0 + label_w + gap, y0)
-        pdf.set_font("Arial", "", font_size)
-        pdf.set_text_color(*field_color)
+    # Value
+    pdf.set_xy(x0 + label_w + gap, y0)
+    pdf.set_font("Arial", "", font_size)
+    pdf.set_text_color(*field_color)
 
-        value_w = (PAGE_W - RIGHT) - (x0 + label_w + gap)
-        pdf.multi_cell(value_w, 6, value or "", border=0)
+    value = value or ""
+    value_w = (PAGE_W - RIGHT) - (x0 + label_w + gap)
+
+    # Si entra en una línea -> cell (más compacto)
+    if pdf.get_string_width(value) <= value_w:
+        pdf.cell(value_w, line_h, value, border=0, ln=1)
+        return y0 + line_h
+    else:
+        pdf.multi_cell(value_w, line_h, value, border=0)
         return pdf.get_y()
+
 
     def section_title(text, y=None):
         if y is not None:
