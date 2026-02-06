@@ -1178,16 +1178,22 @@ def build_pdf_from_record(record):
     pdf.set_text_color(*field_color)
     pdf.multi_cell(PAGE_W - LEFT - RIGHT, 6, record.get("observations", "") or "")
 
-    # =========================
-    # FOOTER (más grande, centrado)
-    # =========================
-    footer_path = static_path("img", "footer.jpg")
-    if os.path.exists(footer_path):
-        footer_x = (PAGE_W - FOOTER_W) / 2
-        footer_y = PAGE_H - FOOTER_H - FOOTER_BOTTOM_PAD
-        pdf.image(footer_path, x=footer_x, y=footer_y, w=FOOTER_W, h=FOOTER_H)
-    else:
-        print(f"[WARN] No existe footer en: {footer_path}")
+# =========================
+# FOOTER (bien grande, centrado)
+# =========================
+footer_path = static_path("img", "footer.jpg")
+if os.path.exists(footer_path):
+    FOOTER_W = 205          # casi todo el ancho (A4=210)
+    FOOTER_H = 48           # mucho más alto (probá 42-55)
+    FOOTER_BOTTOM_PAD = 4   # más pegado al borde
+
+    footer_x = (PAGE_W - FOOTER_W) / 2
+    footer_y = PAGE_H - FOOTER_H - FOOTER_BOTTOM_PAD
+
+    pdf.image(footer_path, x=footer_x, y=footer_y, w=FOOTER_W, h=FOOTER_H)
+else:
+    print(f"[WARN] No existe footer en: {footer_path}")
+
 
     return pdf.output(dest="S").encode("latin-1")
 
