@@ -2,7 +2,6 @@ import os
 import socket
 import ssl
 import datetime
-from PIL import Image
 from io import BytesIO
 from flask import send_file
 from datetime import date
@@ -351,62 +350,48 @@ def add_company():
 
 @app.route("/edit_company/<int:company_id>", methods=["GET", "POST"])
 @login_required
-@app.route("/edit_company/<int:company_id>", methods=["GET", "POST"])
-@login_required
 def edit_company(company_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    try:
-        if request.method == "POST":
-            name = request.form["name"]
-            address = request.form["address"]
-            phone = request.form["phone"]
-            email = request.form["email"]
 
-            try:
-                cur.execute(
-                    """
-                    UPDATE companies
-                    SET name = %s, address = %s, phone = %s, email = %s
-                    WHERE id = %s
-                    """,
-                    (name, address, phone, email, company_id),
-                )
-                conn.commit()
-                flash("Empresa actualizada exitosamente.", "success")
-                return redirect(url_for("home"))
-            except IntegrityError:
-                conn.rollback()
-                flash("Error: El correo electrónico ya existe para otra empresa.", "danger")
-                company_data_for_form = dict(request.form)
-                company_data_for_form["id"] = company_id
-                return (
-                    render_template(
-                        "company_form.html",
-                        company=company_data_for_form,
-                        form_action_url=url_for("edit_company", company_id=company_id),
-                        error="El correo electrónico ya existe.",
-                    ),
-                    400,
-                )
+    if request.method == "POST":
+        name = request.form["name"]
+        address = request.form["address"]
+        phone = request.form["phone"]
+        email = request.form["email"]
 
-        # GET
-        cur.execute("SELECT * FROM companies WHERE id = %s", (company_id,))
-        company = cur.fetchone()
-        if company is None:
-            flash("Empresa no encontrada.", "warning")
-            return redirect(url_for("home"))
+        try:
+            cur.execute(
+                """
+                UPDATE companies
+                SET name = %s, address = %s, phone = %s, email = %s
+                WHERE id = %s
+                """,
+                (name, address, phone, email, company_id),
+            )
+            conn.commit()
+            flash("Empresa actualizada exitosamente.", "success")
+        except IntegrityError:
+            conn.rollback()
+            flash("Error: El correo electrónico ya existe para otra empresa.", "danger")
+            company_data_for_form = dict(request.form)
+            company_data_for_form["id"] = company_id
+            cur.close()
+            conn.close()
+            return (
+                render_template(
+                    "company_form.html",
+                    company=company_data_for_form,
+                    form_action_url=url_for("edit_company", company_id=company_id),
+                    error="El correo electrónico ya existe.",
+                ),
+                400,
+            )
+        finally:
+            cur.close()
+            conn.close()
 
-        return render_template(
-            "company_form.html",
-            company=company,
-            form_action_url=url_for("edit_company", company_id=company_id),
-        )
-
-    finally:
-        cur.close()
-        conn.close()
-
+        return redirect(url_for("home"))
 
     cur.execute("SELECT * FROM companies WHERE id = %s", (company_id,))
     company = cur.fetchone()
@@ -1180,37 +1165,16 @@ def build_pdf_from_record(record):
     pdf.set_text_color(*field_color)
     pdf.multi_cell(desc_w, 6, record.get("observations", "") or "", border=0)
 
-   # =========================
-# FOOTER (fijo abajo, SIN deformar)
-# =========================
-footer_path = static_path("img", "footer.jpg")
-if os.path.exists(footer_path):
+    # =========================
+    # FOOTER (fijo abajo)
+    # =========================
+    footer_path = static_path("img", "footer.jpg")
+    if os.path.exists(footer_path):
+        footer_y = PAGE_H - FOOTER_H - FOOTER_OFFSET
 
-    FOOTER_MAX_H = 20  # <-- probá 18 / 20 / 22 (mm). Esto lo hace menos "alto"
-    FOOTER_OFFSET = 8  # ya lo tenías
-
-    # posición del área de footer (pegado abajo)
-    footer_area_y = PAGE_H - FOOTER_MAX_H - FOOTER_OFFSET
-
-    # calcular tamaño proporcional
-    img_w_px, img_h_px = Image.open(footer_path).size
-    img_ratio = img_w_px / img_h_px  # w/h
-
-    # Queremos que entre en el alto máximo, manteniendo proporción.
-    h = FOOTER_MAX_H
-    w = h * img_ratio
-
-    # si queda más ancho que la hoja, limitamos por ancho y recalculamos alto
-    if w > PAGE_W:
-        w = PAGE_W
-        h = w / img_ratio
-
-    # centrar horizontalmente
-    x = (PAGE_W - w) / 2
-
-    # dibujar
-    pdf.image(footer_path, x=x, y=footer_area_y, w=w, h=h)
-return pdf.output(dest="S").encode("latin-1")
+        # recomendado: NO forzar h para que no se deforme
+        pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W, h=FOOTER_H)
+    return pdf.output(dest="S").encode("latin-1")
 
 
 
