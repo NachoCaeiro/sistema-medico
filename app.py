@@ -1034,27 +1034,12 @@ def delete_medical_record(record_id):
     return redirect(url_for("home"))
 
 def build_pdf_from_record(record):
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=25)
+    pdf = FPDF()
     pdf.add_page()
 
-    header_img = static_path("img", "header.jpg")
-    footer_img = static_path("img", "footer.jpg")
+    pdf.image("static/img/header.jpg", x=10, y=8, w=190)  # Ajusta el path y tamaño si hace falta
+    pdf.ln(30)  # Espacio debajo de la imagen
 
-    # Ajustes
-    CONTENT_START_Y = 45   # dónde empieza el contenido
-    FOOTER_H = 18          # altura del footer en mm
-
-    # HEADER (a ancho completo)
-    if os.path.exists(header_img):
-        pdf.image(header_img, x=0, y=0, w=210)
-
-    # FOOTER (forzado para que no se agrande)
-    if os.path.exists(footer_img):
-        footer_y = 297 - FOOTER_H
-        pdf.image(footer_img, x=0, y=footer_y, w=210, h=FOOTER_H)
-
-    # Colores y márgenes
     title_color = (33, 37, 104)
     field_color = (0, 0, 0)
     line_color = (86, 189, 181)
@@ -1073,35 +1058,74 @@ def build_pdf_from_record(record):
         pdf.set_xy(x_value, y_offset)
         pdf.set_font("Arial", "", 12)
         pdf.set_text_color(*field_color)
-        pdf.cell(120, 10, value or "")
+        pdf.cell(100, 10, value)
 
-    # Acá “reemplaza” el viejo y=60
-    y = CONTENT_START_Y
+    y = 60  # Ajustar inicio después del header
 
+   # EMPRESA
     pdf.line(25, y, 200, y)
-    add_label_value("EMPRESA:", record.get("company_name", ""), y + 2, x_value=50)
+    add_label_value("EMPRESA:", record['company_name'], y + 2,x_value=50)
     y += 12
 
+    # TRABAJADOR
     pdf.line(25, y, 200, y)
-    add_label_value(
-        "Nombre y Apellido:",
-        f"{record.get('patient_name','')} {record.get('patient_surname','')}",
-        y + 2,
-        x_value=65,
-    )
+    add_label_value("Nombre y Apellido:", f"{record['patient_name']} {record['patient_surname']}", y + 2,x_value=65)
+    y += 10
+    add_label_value("DNI:", record['document_number'], y + 2,x_value=35)
+    y += 12
+
+    # EXAMEN
+    pdf.line(25, y, 200, y)
+    add_label_value("EXÁMEN", "", y + 2)
+    y += 10
+    add_label_value("Fecha:", record['date'][8:10] + "/" + record['date'][5:7] + "/" + record['date'][0:4], y + 2,x_value=40)
     y += 10
 
-    add_label_value("DNI:", record.get("document_number", ""), y + 2, x_value=35)
+    # LICENCIA TIPO
+    license = record['license_type'] or ""
+    license_label = "Tipo de licencia:"
+    license_value = ""
+    if "Enfermedad Inculpable" in license:
+        license_value = "Enfermedad Inculpable"
+    elif "ART" in license:
+        license_value = "ART"
+    add_label_value(license_label, license_value, y, x_value=60)
     y += 12
 
-    # ...seguí pegando tu resto del PDF acá igual, usando la variable y...
+    # DESCRIPCIÓN
+    add_label_value("Descripción:", "", y)
+    y += 8
+    pdf.set_xy(35, y)
+    pdf.set_font("Arial", "", 12)
+    pdf.multi_cell(160, 8, record['diagnosis'], border=0)
+    y = pdf.get_y() + 5
+
+    # LICENCIA
+    pdf.line(25, y, 200, y)
+    add_label_value("LICENCIA", "", y + 2)
+    y += 10
+    add_label_value("Días justificados:", str(record['justified_days'] or ''), y, x_value=62)
+    y += 10
+    add_label_value("Desde:", record['license_start'][8:10] + "/" + record['license_start'][5:7] + "/" + record['license_start'][0:4], y, x_value=40)
+    add_label_value("Hasta:", record['license_end'][8:10] + "/" + record['license_end'][5:7] + "/" + record['license_end'][0:4], y, x_label=120, x_value=135)
+    y += 10
+    pdf.set_xy(25, y)
+    pdf.set_font("Arial", "B", 12)
+    pdf.set_text_color(*title_color)
+    add_label_value("Fecha de reincorporación:", record['return_date'][8:10] + "/" + record['return_date'][5:7] + "/" + record['return_date'][0:4], y, x_label=25, x_value=80)
+    y += 12
+
+    # OBSERVACIONES
+    add_label_value("Observaciones:", "", y)
+    y += 8
+    pdf.set_xy(35, y)
+    pdf.set_font("Arial", "", 12)
+    pdf.multi_cell(160, 8, record['observations'] or '', border=0)
+
+
+    pdf.image("static/img/Footer.jpg", x=10, y=250, w=150)
 
     return pdf.output(dest="S").encode("latin-1")
-
-
-
-
-
 
 @app.route("/medical_record/<int:record_id>/pdf")
 @login_required
