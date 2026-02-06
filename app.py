@@ -1035,7 +1035,8 @@ def delete_medical_record(record_id):
 
 def build_pdf_from_record(record):
     pdf = FPDF(format="A4", unit="mm")
-    pdf.set_auto_page_break(auto=True, margin=35)  # deja espacio para footer
+    FOOTER_H = 28
+    pdf.set_auto_page_break(auto=True, margin=FOOTER_H + 6) 
     pdf.add_page()
 
     # --- Medidas hoja A4 ---
@@ -1044,7 +1045,6 @@ def build_pdf_from_record(record):
 
     # --- Header / Footer sizes (ajustables) ---
     HEADER_H = 42   # altura reservada para header (mm)
-    FOOTER_H = 28   # altura reservada para footer (mm)
 
     # --- Colores ---
     title_color = (33, 37, 104)
@@ -1054,11 +1054,11 @@ def build_pdf_from_record(record):
     # =========================
     # HEADER (full width)
     # =========================
-    header_path = "static/img/header.jpg"
+    header_path = static_path("img", "header.jpg")
     if os.path.exists(header_path):
         pdf.image(header_path, x=0, y=0, w=PAGE_W)  # ocupa todo el ancho
     # arranca contenido debajo del header
-    pdf.set_y(HEADER_H + 6)
+    pdf.set_y(HEADER_H + 12)
 
     # Márgenes del contenido
     LEFT = 18
@@ -1207,7 +1207,7 @@ def build_pdf_from_record(record):
     # =========================
     # FOOTER (fijo abajo)
     # =========================
-    footer_path = "static/img/footer.jpg"
+    footer_path = static_path("img", "footer.jpg")
     if os.path.exists(footer_path):
         footer_y = PAGE_H - FOOTER_H  # fijo abajo
         pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W)  # full width, legible
