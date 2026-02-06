@@ -2,6 +2,9 @@ import os
 import socket
 import ssl
 import datetime
+from io import BytesIO
+from flask import send_file
+
 from datetime import date
 from collections import defaultdict
 from functools import wraps
@@ -1124,13 +1127,24 @@ def build_pdf_from_record(record):
 @login_required
 def download_medical_record_pdf(record_id):
     pdf_content = generate_medical_record_pdf(record_id)
-    if pdf_content:
-        response = make_response(pdf_content)
-        response.headers["Content-Type"] = "application/pdf"
-        response.headers["Content-Disposition"] = f"inline; filename=medical_record_{record_id}.pdf"
-        return response
-    flash("No se pudo generar el PDF: Registro médico no encontrado.", "warning")
-    return redirect(url_for("home"))
+    if not pdf_content:
+        flash("No se pudo generar el PDF: Registro médico no encontrado.", "warning")
+        return redirect(url_for("home"))
+
+    # Asegurar bytes sí o sí
+    if isinstance(pdf_content, str):
+        pdf_content = pdf_content.encode("latin-1")
+    elif isinstance(pdf_content, bytearray):
+        pdf_content = bytes(pdf_content)
+
+    return send_file(
+        BytesIO(pdf_content),
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name=f"medical_record_{record_id}.pdf",
+        max_age=0,  # evita cache
+    )
+
 
 
 def generate_medical_record_pdf(record_id):
