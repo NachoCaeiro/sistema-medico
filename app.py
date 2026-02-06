@@ -1036,12 +1036,14 @@ def delete_medical_record(record_id):
 def build_pdf_from_record(record):
     # --- Header / Footer sizes ---
     HEADER_H = 42
-    FOOTER_H = 45  # probá 45 / 50
+    FOOTER_H = 32  # probá 45 / 50
 
     pdf = FPDF(format="A4", unit="mm")
 
     # Reservar espacio para que el texto no pise el footer (ANTES de add_page)
-    pdf.set_auto_page_break(auto=True, margin=FOOTER_H + 6)
+    FOOTER_OFFSET = 8  # mm hacia arriba
+    pdf.set_auto_page_break(auto=True, margin=FOOTER_H + FOOTER_OFFSET + 6)
+
     pdf.add_page()
 
     # --- Medidas hoja A4 ---
@@ -1177,7 +1179,8 @@ def build_pdf_from_record(record):
     # =========================
     footer_path = static_path("img", "footer.jpg")
     if os.path.exists(footer_path):
-        footer_y = PAGE_H - FOOTER_H
+        footer_y = PAGE_H - FOOTER_H - FOOTER_OFFSET
+
         # recomendado: NO forzar h para que no se deforme
         pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W, h=FOOTER_H)
     return pdf.output(dest="S").encode("latin-1")
