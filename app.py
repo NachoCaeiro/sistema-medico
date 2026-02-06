@@ -1044,9 +1044,9 @@ def build_pdf_from_record(record):
     header_img = static_path("img", "header.jpg")
     footer_img = static_path("img", "footer.jpg")
 
-    if os.path.exists(header_img):
-        pdf.image(header_img, x=10, y=8, w=190)
-        pdf.ln(30)
+    if os.path.exists(footer_img):
+    footer_y = pdf.h - 35   # ajustá 35 según qué tan alto sea tu footer
+    pdf.image(footer_img, x=10, y=footer_y, w=190)
     else:
         pdf.ln(10)
 
