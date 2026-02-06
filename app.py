@@ -1020,19 +1020,22 @@ def delete_medical_record(record_id):
         return redirect(url_for("home", search_patient_document=patient_doc_for_redirect))
     return redirect(url_for("home"))
 
-
 def build_pdf_from_record(record):
     # -------------------------
     # Config general
     # -------------------------
     HEADER_H = 42
 
-    # Reservar espacio para que el contenido NO pise el footer
-    FOOTER_BOX_H = 22   # espacio reservado (un poco más que el alto real del footer)
-    FOOTER_OFFSET = 8   # margen de seguridad extra
+    # Footer (más grande)
+    FOOTER_W = 190
+    FOOTER_H = 26
+    FOOTER_BOTTOM_PAD = 6  # separación del borde inferior
+
+    # margin para que el contenido no pise el footer
+    FOOTER_MARGIN = FOOTER_H + FOOTER_BOTTOM_PAD + 6
 
     pdf = FPDF(format="A4", unit="mm")
-    pdf.set_auto_page_break(auto=True, margin=FOOTER_BOX_H + FOOTER_OFFSET)
+    pdf.set_auto_page_break(auto=True, margin=FOOTER_MARGIN)
     pdf.add_page()
 
     PAGE_W = pdf.w   # 210
@@ -1078,8 +1081,8 @@ def build_pdf_from_record(record):
         if not val:
             return ""
         try:
-            if isinstance(val, (datetime.date, datetime.datetime)):
-                d = val.date() if isinstance(val, datetime.datetime) else val
+            if isinstance(val, (date, datetime)):
+                d = val.date() if isinstance(val, datetime) else val
                 return d.strftime("%d/%m/%Y")
             return f"{val[8:10]}/{val[5:7]}/{val[0:4]}"
         except Exception:
@@ -1176,22 +1179,17 @@ def build_pdf_from_record(record):
     pdf.multi_cell(PAGE_W - LEFT - RIGHT, 6, record.get("observations", "") or "")
 
     # =========================
-    # FOOTER (chico, centrado)
+    # FOOTER (más grande, centrado)
     # =========================
     footer_path = static_path("img", "footer.jpg")
     if os.path.exists(footer_path):
-        FOOTER_W = 155   # ajustá si querés
-        FOOTER_H = 18
-
         footer_x = (PAGE_W - FOOTER_W) / 2
-        footer_y = PAGE_H - FOOTER_H - 6  # 6mm arriba del borde
-
+        footer_y = PAGE_H - FOOTER_H - FOOTER_BOTTOM_PAD
         pdf.image(footer_path, x=footer_x, y=footer_y, w=FOOTER_W, h=FOOTER_H)
     else:
         print(f"[WARN] No existe footer en: {footer_path}")
 
     return pdf.output(dest="S").encode("latin-1")
-
 
 
 @app.route("/medical_record/<int:record_id>/pdf")
