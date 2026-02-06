@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Enviar Registros Médicos del Día</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Enviar Registros Médicos del Día</h1>
+        <form method="POST" action="{{ url_for('send_daily_reports') }}">
+            {% for company in companies %}
+                <div>
+                    <input type="checkbox" name="company_ids" value="{{ company.id }}">
+                    {{ company.name }} ({{ company.email }})
+                </div>
+            {% endfor %}
+            <button type="submit" class="btn">Enviar Correos</button>
+            <a href="{{ url_for('home') }}" class="btn btn-secondary">Cancelar</a>
+        </form>
+    </div>
+</body>
+</html>

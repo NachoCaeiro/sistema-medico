@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>
+        {% if record %}Editar Registro Médico
+        {% elif patient %}Agregar Registro Médico para {{ patient.name }} {{ patient.surname }}
+        {% else %}Agregar Nuevo Registro Médico
+        {% endif %}
+    </title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .small-date {
+            max-width: 160px;
+        }
+    </style>
+</head>
+<body>
+    <header class="page-header">
+        <h1>
+            {% if record %}Editar Registro Médico
+            {% elif patient %}Agregar Registro Médico para {{ patient.name }} {{ patient.surname }}
+            {% else %}Agregar Nuevo Registro Médico
+            {% endif %}
+        </h1>
+    </header>
+
+    <div class="container">
+        {% if error %}
+            <p class="alert alert-danger">{{ error }}</p>
+        {% endif %}
+
+        <form method="post" action="{{ form_action_url }}">
+            {% if record %}
+                <div>
+                    <label>Paciente:</label>
+                    <p>{{ patient_details.name }} {{ patient_details.surname }} (Doc: {{ patient_details.document_number }})</p>
+                </div>
+                <div>
+                    <label>Empresa:</label>
+                    <p>{{ company_details.name if company_details else 'N/A' }}</p>
+                </div>
+                <input type="hidden" name="patient_id" value="{{ record.patient_id }}">
+                <input type="hidden" name="company_id" value="{{ record.company_id }}">
+            {% elif patient %}
+                <div>
+                    <label>Paciente:</label>
+                    <p>{{ patient.name }} {{ patient.surname }} (Doc: {{ patient.document_number }})</p>
+                </div>
+                <div>
+                    <label>Empresa:</label>
+                    <p>{{ company_name if company_name else 'N/A (Empresa no encontrada para el paciente)' }}</p>
+                </div>
+                <input type="hidden" name="patient_id" value="{{ patient.id }}">
+            {% else %}
+                <div>
+                    <label for="patient_id">Paciente:</label>
+                    <select id="patient_id" name="patient_id" required>
+                        <option value="">Seleccione un Paciente</option>
+                        {% for p in patients %}
+                            <option value="{{ p.id }}" {% if record_data and record_data.patient_id|string == p.id|string %}selected{% endif %}>
+                                {{ p.name }} {{ p.surname }} ({{ p.document_number }})
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label for="company_display">Empresa (auto-asignada al guardar):</label>
+                    <input type="text" id="company_display" name="company_display" readonly disabled
+                           value="{% if record_data and record_data.patient_id %}Será auto-asignada{% endif %}">
+                </div>
+            {% endif %}
+
+            <div>
+                <label for="diagnosis">Diagnóstico:</label>
+                <textarea id="diagnosis" name="diagnosis" rows="4" required placeholder="Ingrese el diagnóstico aquí...">{{ record.diagnosis if record else (record_data.diagnosis if record_data else '') }}</textarea>
+            </div>
+
+            <div>
+                <label for="date">Fecha de Visita:</label>
+                <input type="date" id="date" name="date" class="small-date"
+                    value="{% if record %}{{ record.date }}{% elif record_data and record_data.date %}{{ record_data.date }}{% else %}{{ current_date }}{% endif %}" 
+                    required>
+            </div>
+
+
+            <div>
+                <label>Tipo de licencia:</label>
+                <label><input type="checkbox" name="license_type" value="Enfermedad Inculpable"
+                    {% if record and record.license_type == 'Enfermedad Inculpable' %}checked{% endif %}> Enfermedad Inculpable</label>
+                <label><input type="checkbox" name="license_type" value="ART"
+                    {% if record and record.license_type == 'ART' %}checked{% endif %}> ART</label>
+            </div>
+
+            <div>
+                <label for="justified_days">Días Justificados:</label>
+                <input type="number" id="justified_days" name="justified_days" class="small-date" value="{{ record.justified_days if record else (record_data.justified_days if record_data else '') }}" required>
+            </div>
+
+            <div>
+                <label for="license_start">Desde:</label>
+                <input type="date" id="license_start" name="license_start" class="small-date" value="{{ record.license_start if record else (record_data.license_start if record_data else current_date) }}" required>
+            </div>
+
+            <div>
+                <label for="license_end">Hasta:</label>
+                <input type="date" id="license_end" name="license_end" class="small-date" value="{{ record.license_end if record else (record_data.license_end if record_data else current_date) }}" required>
+            </div>
+
+            <div>
+                <label for="return_date">Fecha de Reincorporación:</label>
+                <input type="date" id="return_date" name="return_date" class="small-date" value="{{ record.return_date if record else (record_data.return_date if record_data else current_date) }}" required>
+            </div>
+
+            <div>
+                <label for="observations">Observaciones:</label>
+                <textarea id="observations" name="observations" rows="3">{{ record.observations if record else (record_data.observations if record_data else '') }}</textarea>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button type="submit" class="btn btn-success">
+                    {% if record %}Actualizar Registro
+                    {% elif patient %}Guardar Registro para {{ patient.name }}
+                    {% else %}Guardar Registro
+                    {% endif %}
+                </button>
+
+                <button type="submit" name="action" value="save_and_send" class="btn btn-primary">
+                    Guardar y Enviar por Email
+                </button>
+
+                <a href="{{ url_for('home') }}" class="btn btn-secondary">Volver al tablero</a>
+            </div>
+        </form>
+    </div>
+
+    {% if not record and not patient %}
+    <script>
+        const patientSelect = document.getElementById('patient_id');
+        const companyDisplay = document.getElementById('company_display');
+        if (patientSelect) {
+            patientSelect.addEventListener('change', function() {
+                companyDisplay.value = this.value ? 'Será auto-asignada' : '';
+            });
+            if (patientSelect.value) {
+                patientSelect.dispatchEvent(new Event('change'));
+            }
+        }
+    </script>
+    {% endif %}
+</body>
+</html>

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Seleccionar Empresas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h2>Enviar Registros Médicos del Día: {{ today }}</h2>
+        <form method="post" action="{{ url_for('send_daily_reports_selected') }}">
+            <ul class="item-list">
+            {% for company in companies %}
+                <li>
+                    <label>
+                        <input type="checkbox" name="company_ids" value="{{ company.id }}">
+                        {{ company.name }} - {{ company.email }} ({{ company.record_count }} registros)
+                    </label>
+                </li>
+            {% endfor %}
+            </ul>
+            <button type="submit" class="btn btn-warning">Enviar Correos Seleccionados</button>
+            <a href="{{ url_for('home') }}" class="btn btn-secondary">Cancelar</a>
+        </form>
+    </div>
+</body>
+</html>
