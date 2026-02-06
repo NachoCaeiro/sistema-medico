@@ -1020,56 +1020,51 @@ def delete_medical_record(record_id):
         return redirect(url_for("home", search_patient_document=patient_doc_for_redirect))
     return redirect(url_for("home"))
 
-
-# ----------------------------
-# PDF (NO CAMBIAR – dejé tus funciones tal cual en tu repo)
-# ----------------------------
 def build_pdf_from_record(record):
-    # --- Header / Footer sizes ---
+    # -------------------------
+    # Config general
+    # -------------------------
     HEADER_H = 42
-    FOOTER_H = 22  # probá 45 / 50
+    FOOTER_H = 22
+    FOOTER_OFFSET = 4
 
     pdf = FPDF(format="A4", unit="mm")
-
-    # Reservar espacio para que el texto no pise el footer (ANTES de add_page)
-    FOOTER_OFFSET = 4  # mm hacia arriba
     pdf.set_auto_page_break(auto=True, margin=FOOTER_H + FOOTER_OFFSET + 6)
-
     pdf.add_page()
 
-    # --- Medidas hoja A4 ---
-    PAGE_W = pdf.w  # 210
-    PAGE_H = pdf.h  # 297
+    PAGE_W = pdf.w   # 210
+    PAGE_H = pdf.h   # 297
 
-    # --- Colores ---
+    # Colores
     title_color = (33, 37, 104)
     field_color = (0, 0, 0)
     line_color = (86, 189, 181)
 
     # =========================
-    # HEADER (full width)
+    # HEADER
     # =========================
     header_path = static_path("img", "header.jpg")
     if os.path.exists(header_path):
         pdf.image(header_path, x=0, y=0, w=PAGE_W)
 
-    # Arranca contenido más abajo
-    CONTENT_TOP = HEADER_H + 20
+    # Aire debajo del header
+    CONTENT_TOP = HEADER_H + 22
     pdf.set_y(CONTENT_TOP)
 
-    # Márgenes del contenido
     LEFT = 18
     RIGHT = 18
     pdf.set_left_margin(LEFT)
     pdf.set_right_margin(RIGHT)
 
+    # -------------------------
     # Helpers
+    # -------------------------
     def hline(y):
         pdf.set_draw_color(*line_color)
         pdf.set_line_width(0.8)
         pdf.line(LEFT, y, PAGE_W - RIGHT, y)
 
-    def label_value(label, value, y=None, label_w=45, gap=2, font_size=11):
+    def label_value(label, value, y=None, label_w=45, font_size=11):
         if y is not None:
             pdf.set_y(y)
 
@@ -1081,12 +1076,12 @@ def build_pdf_from_record(record):
         pdf.set_text_color(*title_color)
         pdf.cell(label_w, 6, label, border=0)
 
-        pdf.set_xy(x0 + label_w + gap, y0)
+        pdf.set_xy(x0 + label_w + 2, y0)
         pdf.set_font("Arial", "", font_size)
         pdf.set_text_color(*field_color)
-
-        value_w = (PAGE_W - RIGHT) - (x0 + label_w + gap)
+        value_w = (PAGE_W - RIGHT) - (x0 + label_w + 2)
         pdf.multi_cell(value_w, 6, value or "", border=0)
+
         return pdf.get_y()
 
     def section_title(text, y=None):
@@ -1096,84 +1091,90 @@ def build_pdf_from_record(record):
         pdf.set_text_color(*title_color)
         pdf.cell(0, 7, text, ln=1)
 
-    def fmt_iso_to_ddmmyyyy(s):
-        if not s:
+    def fmt_date(val):
+        if not val:
             return ""
         try:
-            if isinstance(s, (datetime.date, datetime.datetime)):
-                d = s.date() if isinstance(s, datetime.datetime) else s
+            if isinstance(val, (datetime.date, datetime.datetime)):
+                d = val.date() if isinstance(val, datetime.datetime) else val
                 return d.strftime("%d/%m/%Y")
-            return f"{s[8:10]}/{s[5:7]}/{s[0:4]}"
+            return f"{val[8:10]}/{val[5:7]}/{val[0:4]}"
         except Exception:
-            return str(s)
+            return str(val)
 
     # =========================
     # CONTENIDO
     # =========================
     y = pdf.get_y()
 
-    hline(y); y += 3
+    hline(y); y += 4
     y = label_value("EMPRESA:", record.get("company_name", ""), y=y, label_w=28)
-    y += 2
+    y += 6
 
-    hline(y); y += 3
+    hline(y); y += 4
     full_name = f"{record.get('patient_name','')} {record.get('patient_surname','')}".strip()
     y = label_value("Nombre y Apellido:", full_name, y=y, label_w=45)
     y = label_value("DNI:", record.get("document_number", ""), y=y, label_w=12)
-    y += 2
+    y += 8
 
-    hline(y); y += 3
+    hline(y); y += 4
     section_title("EXAMEN", y=y)
-    y = pdf.get_y()
-    y = label_value("Fecha:", fmt_iso_to_ddmmyyyy(record.get("date")), y=y, label_w=15)
-    y += 2
+    y = label_value("Fecha:", fmt_date(record.get("date")), y=pdf.get_y(), label_w=15)
+    y += 4
 
     license_str = record.get("license_type") or ""
-    lic_value = "Enfermedad Inculpable" if "Enfermedad Inculpable" in license_str else ("ART" if "ART" in license_str else "")
-    y = label_value("Tipo de licencia:", lic_value, y=y, label_w=35)
-    y += 2
+    tipo_lic = "Enfermedad Inculpable" if "Enfermedad Inculpable" in license_str else ("ART" if "ART" in license_str else "")
+    y = label_value("Tipo de licencia:", tipo_lic, y=y, label_w=35)
+    y += 4
 
     section_title("Descripción:", y=y)
     pdf.set_font("Arial", "", 11)
     pdf.set_text_color(*field_color)
-    desc_w = PAGE_W - LEFT - RIGHT
-    pdf.multi_cell(desc_w, 6, record.get("diagnosis", "") or "", border=0)
-    y = pdf.get_y() + 2
+    pdf.multi_cell(PAGE_W - LEFT - RIGHT, 6, record.get("diagnosis", "") or "")
+    y = pdf.get_y() + 6
 
-    hline(y); y += 3
+    hline(y); y += 5
     section_title("LICENCIA", y=y)
-    y = pdf.get_y()
 
-    y = label_value("Días justificados:", str(record.get("justified_days") or ""), y=y, label_w=40)
+    y = label_value("Días justificados:", str(record.get("justified_days") or ""), y=pdf.get_y(), label_w=40)
 
-    desde = fmt_iso_to_ddmmyyyy(record.get("license_start"))
-    hasta = fmt_iso_to_ddmmyyyy(record.get("license_end"))
+    desde = fmt_date(record.get("license_start"))
+    hasta = fmt_date(record.get("license_end"))
 
-    pdf.set_y(y)
-    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(14, 6, "Desde:", 0, 0)
-    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(50, 6, desde, 0, 0)
+    pdf.set_font("Arial", "B", 11)
+    pdf.set_text_color(*title_color)
+    pdf.cell(14, 6, "Desde:", 0, 0)
+    pdf.set_font("Arial", "", 11)
+    pdf.set_text_color(*field_color)
+    pdf.cell(50, 6, desde, 0, 0)
 
-    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(14, 6, "Hasta:", 0, 0)
-    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(0, 6, hasta, 0, 1)
+    pdf.set_font("Arial", "B", 11)
+    pdf.set_text_color(*title_color)
+    pdf.cell(14, 6, "Hasta:", 0, 0)
+    pdf.set_font("Arial", "", 11)
+    pdf.set_text_color(*field_color)
+    pdf.cell(0, 6, hasta, 0, 1)
 
-    y = pdf.get_y()
-    y = label_value("Fecha reincorporación:", fmt_iso_to_ddmmyyyy(record.get("return_date")), y=y, label_w=45)
-    y += 2
+    y = pdf.get_y() + 4
+    y = label_value("Fecha reincorporación:", fmt_date(record.get("return_date")), y=y, label_w=45)
+    y += 6
 
     section_title("Observaciones:", y=y)
     pdf.set_font("Arial", "", 11)
     pdf.set_text_color(*field_color)
-    pdf.multi_cell(desc_w, 6, record.get("observations", "") or "", border=0)
+    pdf.multi_cell(PAGE_W - LEFT - RIGHT, 6, record.get("observations", "") or "")
 
     # =========================
-    # FOOTER (fijo abajo)
+    # FOOTER (chico y centrado)
     # =========================
-    footer_path = static_path("img", "footer.jpg")
+    footer_path = static_path("img", "Footer.jpg")
     if os.path.exists(footer_path):
-        footer_y = PAGE_H - FOOTER_H - FOOTER_OFFSET
+        FOOTER_W = 150
+        footer_x = (PAGE_W - FOOTER_W) / 2
+        footer_y = PAGE_H - 20
 
-        # recomendado: NO forzar h para que no se deforme
-        pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W)
+        pdf.image(footer_path, x=footer_x, y=footer_y, w=FOOTER_W)
+
     return pdf.output(dest="S").encode("latin-1")
 
 
