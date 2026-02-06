@@ -1,8 +1,10 @@
 import os
+import socket
 import ssl
 import datetime
-from datetime import date
 from io import BytesIO
+from flask import send_file
+from datetime import date
 from collections import defaultdict
 from functools import wraps
 
@@ -10,7 +12,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2 import IntegrityError
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 from fpdf import FPDF
 
@@ -29,20 +31,17 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME")  # puede no estar seteado en dev
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")  # App Password (Gmail)
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")  # App Password
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER") or (SMTP_USERNAME or "")
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
-
 def get_today_iso():
     return date.today().isoformat()
 
-
 def is_smtp_configured() -> bool:
     """Valida que haya credenciales SMTP reales seteadas (Cloud Run)."""
-    return bool(SMTP_USERNAME and SMTP_PASSWORD and SMTP_SERVER and SMTP_PORT and EMAIL_SENDER)
-
+    return bool(SMTP_USERNAME and SMTP_PASSWORD and SMTP_SERVER and SMTP_PORT)
 
 # ----------------------------
 # Neon (PostgreSQL)
@@ -53,74 +52,64 @@ def get_db_connection():
     return psycopg2.connect(
         os.environ["DATABASE_URL"],
         cursor_factory=RealDictCursor,
-        sslmode="require",
+        sslmode="require"
     )
-
 
 def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
 
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS companies (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            address TEXT,
-            phone TEXT,
-            email TEXT NOT NULL
-        );
-        """
-    )
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS companies (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        address TEXT,
+        phone TEXT,
+        email TEXT NOT NULL
+    );
+    """)
 
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS patients (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            surname TEXT NOT NULL,
-            document_number TEXT UNIQUE NOT NULL,
-            phone TEXT,
-            email TEXT,
-            age INTEGER,
-            company_id INTEGER REFERENCES companies(id)
-        );
-        """
-    )
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS patients (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        surname TEXT NOT NULL,
+        document_number TEXT UNIQUE NOT NULL,
+        phone TEXT,
+        email TEXT,
+        age INTEGER,
+        company_id INTEGER REFERENCES companies(id)
+    );
+    """)
 
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS medical_records (
-            id SERIAL PRIMARY KEY,
-            patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
-            diagnosis TEXT NOT NULL,
-            date DATE NOT NULL,
-            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-            license_type TEXT,
-            justified_days INTEGER,
-            license_start DATE,
-            license_end DATE,
-            return_date DATE,
-            observations TEXT,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        """
-    )
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS medical_records (
+        id SERIAL PRIMARY KEY,
+        patient_id INTEGER NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+        diagnosis TEXT NOT NULL,
+        date DATE NOT NULL,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        license_type TEXT,
+        justified_days INTEGER,
+        license_start DATE,
+        license_end DATE,
+        return_date DATE,
+        observations TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    """)
 
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL
-        );
-        """
-    )
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL
+    );
+    """)
 
     conn.commit()
     cur.close()
     conn.close()
-
 
 def add_default_user():
     """
@@ -148,18 +137,18 @@ def add_default_user():
                 (username, password_hash),
             )
             conn.commit()
-            print(f"[INFO] Usuario '{username}' creado exitosamente.")
+            print(f"Usuario '{username}' creado exitosamente.")
         except IntegrityError:
             conn.rollback()
-            print(f"[INFO] Usuario '{username}' ya existe (IntegrityError).")
+            print(f"Usuario '{username}' ya existe (IntegrityError).")
     else:
-        print(f"[INFO] Usuario '{username}' ya existe.")
+        print(f"Usuario '{username}' ya existe.")
 
     cur.close()
     conn.close()
 
-
-# Inicializar DB al arrancar
+# Inicializar DB al arrancar (CREATE TABLE IF NOT EXISTS es seguro)
+# En Cloud Run puede ejecutarse por instancia, pero no rompe.
 if os.environ.get("INIT_DB_ON_STARTUP", "1") == "1":
     try:
         init_db()
@@ -178,33 +167,21 @@ def login_required(f):
             flash("Por favor, inicie sesión para acceder a esta página.", "info")
             return redirect(url_for("login", next=request.url))
         return f(*args, **kwargs)
-
     return decorated_function
 
-
 def parse_date(value):
+    """Convierte 'YYYY-MM-DD' a date, o devuelve None."""
     if not value:
         return None
-
-    if isinstance(value, (date, datetime.datetime)):
+    if isinstance(value, (datetime.date, datetime.datetime)):
         return value.date() if isinstance(value, datetime.datetime) else value
-
     try:
-        return date.fromisoformat(str(value))
+        return datetime.date.fromisoformat(str(value))
     except Exception:
         return None
 
-
 def static_path(*parts):
     return os.path.join(BASE_DIR, "static", *parts)
-
-
-def split_emails(raw: str):
-    # Soporta: "a@a.com,b@b.com; c@c.com"
-    if not raw:
-        return []
-    raw = raw.replace(";", ",")
-    return [e.strip() for e in raw.split(",") if e.strip()]
 
 
 # ----------------------------
@@ -214,7 +191,7 @@ def split_emails(raw: str):
 def login():
     error = None
     if request.method == "POST":
-        username = request.form["username"].strip()
+        username = request.form["username"]
         password = request.form["password"]
 
         conn = get_db_connection()
@@ -229,11 +206,9 @@ def login():
             session["username"] = user["username"]
             flash("Inicio de sesión exitoso.", "success")
             return redirect(url_for("home"))
-
         error = "Usuario o contraseña incorrectos. Por favor, intente de nuevo."
 
     return render_template("login.html", error=error)
-
 
 @app.route("/logout")
 def logout():
@@ -338,14 +313,14 @@ def home():
 @login_required
 def add_company():
     if request.method == "POST":
-        name = request.form["name"].strip()
-        address = request.form.get("address", "").strip()
-        phone = request.form.get("phone", "").strip()
-        email = request.form["email"].strip()  # puede ser "a@a.com,b@b.com"
+        name = request.form["name"]
+        address = request.form["address"]
+        phone = request.form["phone"]
+        email = request.form["email"]
 
         conn = get_db_connection()
-        cur = conn.cursor()
         try:
+            cur = conn.cursor()
             cur.execute(
                 "INSERT INTO companies (name, address, phone, email) VALUES (%s, %s, %s, %s)",
                 (name, address, phone, email),
@@ -354,13 +329,14 @@ def add_company():
             flash("Empresa agregada exitosamente.", "success")
         except IntegrityError:
             conn.rollback()
-            flash("Error de integridad al guardar la empresa.", "danger")
+            # OJO: si NO tenés un UNIQUE en email, esto no se disparará.
+            flash("Error: El correo electrónico ya existe para otra empresa.", "danger")
             return (
                 render_template(
                     "company_form.html",
                     company=request.form,
                     form_action_url=url_for("add_company"),
-                    error="Error de integridad al guardar la empresa.",
+                    error="El correo electrónico ya existe.",
                 ),
                 400,
             )
@@ -372,7 +348,6 @@ def add_company():
 
     return render_template("company_form.html", form_action_url=url_for("add_company"))
 
-
 @app.route("/edit_company/<int:company_id>", methods=["GET", "POST"])
 @login_required
 def edit_company(company_id):
@@ -380,10 +355,10 @@ def edit_company(company_id):
     cur = conn.cursor()
 
     if request.method == "POST":
-        name = request.form["name"].strip()
-        address = request.form.get("address", "").strip()
-        phone = request.form.get("phone", "").strip()
-        email = request.form["email"].strip()
+        name = request.form["name"]
+        address = request.form["address"]
+        phone = request.form["phone"]
+        email = request.form["email"]
 
         try:
             cur.execute(
@@ -398,7 +373,7 @@ def edit_company(company_id):
             flash("Empresa actualizada exitosamente.", "success")
         except IntegrityError:
             conn.rollback()
-            flash("Error de integridad al actualizar la empresa.", "danger")
+            flash("Error: El correo electrónico ya existe para otra empresa.", "danger")
             company_data_for_form = dict(request.form)
             company_data_for_form["id"] = company_id
             cur.close()
@@ -408,7 +383,7 @@ def edit_company(company_id):
                     "company_form.html",
                     company=company_data_for_form,
                     form_action_url=url_for("edit_company", company_id=company_id),
-                    error="Error de integridad al actualizar la empresa.",
+                    error="El correo electrónico ya existe.",
                 ),
                 400,
             )
@@ -432,7 +407,6 @@ def edit_company(company_id):
         company=company,
         form_action_url=url_for("edit_company", company_id=company_id),
     )
-
 
 @app.route("/delete_company/<int:company_id>", methods=["POST"])
 @login_required
@@ -477,17 +451,15 @@ def add_patient():
     cur = conn.cursor()
 
     if request.method == "POST":
-        name = request.form["name"].strip()
-        surname = request.form["surname"].strip()
-        document_number = request.form["document_number"].strip()
-        phone = request.form.get("phone", "").strip()
-        email = request.form.get("email", "").strip()
-
-        age_str = request.form.get("age", "").strip()
-        age = int(age_str) if age_str.isdigit() else None
-
-        company_id_str = request.form.get("company_id", "").strip()
-        company_id = int(company_id_str) if company_id_str.isdigit() else None
+        name = request.form["name"]
+        surname = request.form["surname"]
+        document_number = request.form["document_number"]
+        phone = request.form.get("phone")
+        email = request.form.get("email")
+        age_str = request.form.get("age")
+        age = int(age_str) if age_str and age_str.isdigit() else None
+        company_id_str = request.form.get("company_id")
+        company_id = int(company_id_str) if company_id_str and company_id_str.isdigit() else None
 
         if not company_id:
             flash("Error: La empresa debe ser seleccionada.", "danger")
@@ -545,7 +517,6 @@ def add_patient():
     conn.close()
     return render_template("patient_form.html", companies=companies_data, form_action_url=url_for("add_patient"))
 
-
 @app.route("/edit_patient/<int:patient_id>", methods=["GET", "POST"])
 @login_required
 def edit_patient(patient_id):
@@ -553,17 +524,15 @@ def edit_patient(patient_id):
     cur = conn.cursor()
 
     if request.method == "POST":
-        name = request.form["name"].strip()
-        surname = request.form["surname"].strip()
-        document_number = request.form["document_number"].strip()
-        phone = request.form.get("phone", "").strip()
-        email = request.form.get("email", "").strip()
-
-        age_str = request.form.get("age", "").strip()
-        age = int(age_str) if age_str.isdigit() else None
-
-        company_id_str = request.form.get("company_id", "").strip()
-        company_id = int(company_id_str) if company_id_str.isdigit() else None
+        name = request.form["name"]
+        surname = request.form["surname"]
+        document_number = request.form["document_number"]
+        phone = request.form.get("phone")
+        email = request.form.get("email")
+        age_str = request.form.get("age")
+        age = int(age_str) if age_str and age_str.isdigit() else None
+        company_id_str = request.form.get("company_id")
+        company_id = int(company_id_str) if company_id_str and company_id_str.isdigit() else None
 
         if not company_id:
             flash("Error: La empresa debe ser seleccionada.", "danger")
@@ -640,7 +609,6 @@ def edit_patient(patient_id):
         form_action_url=url_for("edit_patient", patient_id=patient_id),
     )
 
-
 @app.route("/delete_patient/<int:patient_id>", methods=["POST"])
 @login_required
 def delete_patient(patient_id):
@@ -661,7 +629,6 @@ def delete_patient(patient_id):
         conn.close()
 
     return redirect(url_for("home"))
-
 
 def get_patient_company_id(patient_id):
     conn = get_db_connection()
@@ -731,9 +698,9 @@ def add_medical_record():
             cur.execute(
                 """
                 INSERT INTO medical_records
-                    (patient_id, diagnosis, date, company_id, license_type, justified_days, license_start, license_end, return_date, observations)
+                  (patient_id, diagnosis, date, company_id, license_type, justified_days, license_start, license_end, return_date, observations)
                 VALUES
-                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -776,10 +743,7 @@ def add_medical_record():
                 flash("No se puede enviar email: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD).", "warning")
             else:
                 success = send_medical_record_email(new_record_id)
-                flash(
-                    "Correo enviado exitosamente." if success else "Error al enviar el correo.",
-                    "success" if success else "danger",
-                )
+                flash("Correo enviado exitosamente." if success else "Error al enviar el correo.", "success" if success else "danger")
 
         patient_doc_conn = get_db_connection()
         doc_cur = patient_doc_conn.cursor()
@@ -803,7 +767,6 @@ def add_medical_record():
         form_action_url=url_for("add_medical_record"),
         current_date=get_today_iso(),
     )
-
 
 @app.route("/add_medical_record/<int:patient_id>", methods=["GET", "POST"])
 @login_required
@@ -859,9 +822,9 @@ def add_medical_record_for_patient(patient_id):
             cur.execute(
                 """
                 INSERT INTO medical_records
-                    (patient_id, diagnosis, date, company_id, license_type, justified_days, license_start, license_end, return_date, observations)
+                  (patient_id, diagnosis, date, company_id, license_type, justified_days, license_start, license_end, return_date, observations)
                 VALUES
-                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -884,11 +847,8 @@ def add_medical_record_for_patient(patient_id):
                 if not is_smtp_configured():
                     flash("No se puede enviar email: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD).", "warning")
                 else:
-                    ok = send_medical_record_email(record_id)
-                    flash(
-                        "Registro médico agregado y enviado por correo." if ok else "Registro creado, pero falló el envío.",
-                        "success" if ok else "warning",
-                    )
+                    send_medical_record_email(record_id)
+                    flash("Registro médico agregado y enviado por correo.", "success")
             else:
                 flash("Registro médico agregado exitosamente para el paciente.", "success")
 
@@ -922,7 +882,6 @@ def add_medical_record_for_patient(patient_id):
         current_date=get_today_iso(),
     )
 
-
 @app.route("/edit_medical_record/<int:record_id>", methods=["GET", "POST"])
 @login_required
 def edit_medical_record(record_id):
@@ -932,7 +891,6 @@ def edit_medical_record(record_id):
     if request.method == "POST":
         diagnosis = request.form["diagnosis"]
         visit_date = parse_date(request.form["date"])
-
         license_type_list = request.form.getlist("license_type")
         license_type = ", ".join(license_type_list) if license_type_list else None
 
@@ -1026,7 +984,6 @@ def edit_medical_record(record_id):
         form_action_url=url_for("edit_medical_record", record_id=record_id),
     )
 
-
 @app.route("/delete_medical_record/<int:record_id>", methods=["POST"])
 @login_required
 def delete_medical_record(record_id):
@@ -1065,45 +1022,72 @@ def delete_medical_record(record_id):
 
 
 # ----------------------------
-# PDF
+# PDF (NO CAMBIAR – dejé tus funciones tal cual en tu repo)
 # ----------------------------
 def build_pdf_from_record(record):
+    # --- Header / Footer sizes ---
     HEADER_H = 42
-
-    # Footer grande
-    FOOTER_W = 205
-    FOOTER_H = 48
-    FOOTER_BOTTOM_PAD = 4
-    FOOTER_MARGIN = FOOTER_H + FOOTER_BOTTOM_PAD + 8  # para que el texto no pise el footer
+    FOOTER_H = 32  # probá 45 / 50
 
     pdf = FPDF(format="A4", unit="mm")
-    pdf.set_auto_page_break(auto=True, margin=FOOTER_MARGIN)
+
+    # Reservar espacio para que el texto no pise el footer (ANTES de add_page)
+    FOOTER_OFFSET = 8  # mm hacia arriba
+    pdf.set_auto_page_break(auto=True, margin=FOOTER_H + FOOTER_OFFSET + 6)
+
     pdf.add_page()
 
-    PAGE_W = pdf.w
-    PAGE_H = pdf.h
+    # --- Medidas hoja A4 ---
+    PAGE_W = pdf.w  # 210
+    PAGE_H = pdf.h  # 297
 
+    # --- Colores ---
     title_color = (33, 37, 104)
     field_color = (0, 0, 0)
     line_color = (86, 189, 181)
 
-    # HEADER image
+    # =========================
+    # HEADER (full width)
+    # =========================
     header_path = static_path("img", "header.jpg")
     if os.path.exists(header_path):
         pdf.image(header_path, x=0, y=0, w=PAGE_W)
 
-    CONTENT_TOP = HEADER_H + 18
+    # Arranca contenido más abajo
+    CONTENT_TOP = HEADER_H + 20
     pdf.set_y(CONTENT_TOP)
 
+    # Márgenes del contenido
     LEFT = 18
     RIGHT = 18
     pdf.set_left_margin(LEFT)
     pdf.set_right_margin(RIGHT)
 
+    # Helpers
     def hline(y):
         pdf.set_draw_color(*line_color)
         pdf.set_line_width(0.8)
         pdf.line(LEFT, y, PAGE_W - RIGHT, y)
+
+    def label_value(label, value, y=None, label_w=45, gap=2, font_size=11):
+        if y is not None:
+            pdf.set_y(y)
+
+        x0 = LEFT
+        y0 = pdf.get_y()
+
+        pdf.set_xy(x0, y0)
+        pdf.set_font("Arial", "B", font_size)
+        pdf.set_text_color(*title_color)
+        pdf.cell(label_w, 6, label, border=0)
+
+        pdf.set_xy(x0 + label_w + gap, y0)
+        pdf.set_font("Arial", "", font_size)
+        pdf.set_text_color(*field_color)
+
+        value_w = (PAGE_W - RIGHT) - (x0 + label_w + gap)
+        pdf.multi_cell(value_w, 6, value or "", border=0)
+        return pdf.get_y()
 
     def section_title(text, y=None):
         if y is not None:
@@ -1112,122 +1096,87 @@ def build_pdf_from_record(record):
         pdf.set_text_color(*title_color)
         pdf.cell(0, 7, text, ln=1)
 
-    def fmt_date(val):
-        if not val:
+    def fmt_iso_to_ddmmyyyy(s):
+        if not s:
             return ""
         try:
-            if isinstance(val, (date, datetime.datetime)):
-                d = val.date() if isinstance(val, datetime.datetime) else val
+            if isinstance(s, (datetime.date, datetime.datetime)):
+                d = s.date() if isinstance(s, datetime.datetime) else s
                 return d.strftime("%d/%m/%Y")
-            s = str(val)
-            # intenta YYYY-MM-DD
-            if len(s) >= 10 and s[4] == "-" and s[7] == "-":
-                return f"{s[8:10]}/{s[5:7]}/{s[0:4]}"
-            return s
+            return f"{s[8:10]}/{s[5:7]}/{s[0:4]}"
         except Exception:
-            return str(val)
+            return str(s)
 
-    def label_value(label, value, y=None, label_w=32, font_size=11, line_h=6):
-        if y is not None:
-            pdf.set_y(y)
-
-        x0 = LEFT
-        y0 = pdf.get_y()
-        value = value or ""
-
-        pdf.set_xy(x0, y0)
-        pdf.set_font("Arial", "B", font_size)
-        pdf.set_text_color(*title_color)
-        pdf.cell(label_w, line_h, label, border=0)
-
-        pdf.set_xy(x0 + label_w, y0)
-        pdf.set_font("Arial", "", font_size)
-        pdf.set_text_color(*field_color)
-
-        value_w = (PAGE_W - RIGHT) - (x0 + label_w)
-        pdf.multi_cell(value_w, line_h, value, border=0)
-        return pdf.get_y()
-
+    # =========================
     # CONTENIDO
+    # =========================
     y = pdf.get_y()
-    hline(y)
-    y += 3
-    y = label_value("EMPRESA:", record.get("company_name", ""), y=y, label_w=25)
-    y += 3
 
-    hline(y)
-    y += 3
+    hline(y); y += 3
+    y = label_value("EMPRESA:", record.get("company_name", ""), y=y, label_w=28)
+    y += 2
+
+    hline(y); y += 3
     full_name = f"{record.get('patient_name','')} {record.get('patient_surname','')}".strip()
-    y = label_value("Nombre y Apellido:", full_name, y=y, label_w=40)
+    y = label_value("Nombre y Apellido:", full_name, y=y, label_w=45)
     y = label_value("DNI:", record.get("document_number", ""), y=y, label_w=12)
-    y += 3
+    y += 2
 
-    hline(y)
-    y += 3
+    hline(y); y += 3
     section_title("EXAMEN", y=y)
-
-    y = label_value("Fecha:", fmt_date(record.get("date")), y=pdf.get_y(), label_w=15)
+    y = pdf.get_y()
+    y = label_value("Fecha:", fmt_iso_to_ddmmyyyy(record.get("date")), y=y, label_w=15)
     y += 2
 
     license_str = record.get("license_type") or ""
-    tipo_lic = "Enfermedad Inculpable" if "Enfermedad Inculpable" in license_str else ("ART" if "ART" in license_str else "")
-    y = label_value("Tipo de licencia:", tipo_lic, y=y, label_w=35)
+    lic_value = "Enfermedad Inculpable" if "Enfermedad Inculpable" in license_str else ("ART" if "ART" in license_str else "")
+    y = label_value("Tipo de licencia:", lic_value, y=y, label_w=35)
     y += 2
 
-    pdf.set_font("Arial", "B", 11)
-    pdf.set_text_color(*title_color)
-    pdf.cell(0, 6, "Descripción:", ln=1)
-
+    section_title("Descripción:", y=y)
     pdf.set_font("Arial", "", 11)
     pdf.set_text_color(*field_color)
-    pdf.multi_cell(PAGE_W - LEFT - RIGHT, 6, record.get("diagnosis", "") or "")
+    desc_w = PAGE_W - LEFT - RIGHT
+    pdf.multi_cell(desc_w, 6, record.get("diagnosis", "") or "", border=0)
     y = pdf.get_y() + 2
 
-    hline(y)
-    y += 3
+    hline(y); y += 3
     section_title("LICENCIA", y=y)
+    y = pdf.get_y()
 
-    y = label_value("Días justificados:", str(record.get("justified_days") or ""), y=pdf.get_y(), label_w=40)
+    y = label_value("Días justificados:", str(record.get("justified_days") or ""), y=y, label_w=40)
 
-    desde = fmt_date(record.get("license_start"))
-    hasta = fmt_date(record.get("license_end"))
+    desde = fmt_iso_to_ddmmyyyy(record.get("license_start"))
+    hasta = fmt_iso_to_ddmmyyyy(record.get("license_end"))
 
-    pdf.set_font("Arial", "B", 11)
-    pdf.set_text_color(*title_color)
-    pdf.cell(14, 6, "Desde:", 0, 0)
-    pdf.set_font("Arial", "", 11)
-    pdf.set_text_color(*field_color)
-    pdf.cell(50, 6, desde, 0, 0)
+    pdf.set_y(y)
+    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(14, 6, "Desde:", 0, 0)
+    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(50, 6, desde, 0, 0)
 
-    pdf.set_font("Arial", "B", 11)
-    pdf.set_text_color(*title_color)
-    pdf.cell(14, 6, "Hasta:", 0, 0)
-    pdf.set_font("Arial", "", 11)
-    pdf.set_text_color(*field_color)
-    pdf.cell(0, 6, hasta, 0, 1)
+    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(14, 6, "Hasta:", 0, 0)
+    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(0, 6, hasta, 0, 1)
 
-    y = pdf.get_y() + 1
-    y = label_value("Fecha reincorporación:", fmt_date(record.get("return_date")), y=y, label_w=45)
+    y = pdf.get_y()
+    y = label_value("Fecha reincorporación:", fmt_iso_to_ddmmyyyy(record.get("return_date")), y=y, label_w=45)
     y += 2
 
-    pdf.set_font("Arial", "B", 11)
-    pdf.set_text_color(*title_color)
-    pdf.cell(0, 6, "Observaciones:", ln=1)
-
+    section_title("Observaciones:", y=y)
     pdf.set_font("Arial", "", 11)
     pdf.set_text_color(*field_color)
-    pdf.multi_cell(PAGE_W - LEFT - RIGHT, 6, record.get("observations", "") or "")
+    pdf.multi_cell(desc_w, 6, record.get("observations", "") or "", border=0)
 
-    # FOOTER grande centrado
+    # =========================
+    # FOOTER (fijo abajo)
+    # =========================
     footer_path = static_path("img", "footer.jpg")
     if os.path.exists(footer_path):
-        footer_x = (PAGE_W - FOOTER_W) / 2
-        footer_y = PAGE_H - FOOTER_H - FOOTER_BOTTOM_PAD
-        pdf.image(footer_path, x=footer_x, y=footer_y, w=FOOTER_W, h=FOOTER_H)
-    else:
-        print(f"[WARN] No existe footer en: {footer_path}")
+        footer_y = PAGE_H - FOOTER_H - FOOTER_OFFSET
 
+        # recomendado: NO forzar h para que no se deforme
+        pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W, h=FOOTER_H)
     return pdf.output(dest="S").encode("latin-1")
+
+
 
 
 @app.route("/medical_record/<int:record_id>/pdf")
@@ -1251,7 +1200,6 @@ def download_medical_record_pdf(record_id):
         max_age=0,
     )
 
-
 def generate_medical_record_pdf(record_id):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -1273,7 +1221,7 @@ def generate_medical_record_pdf(record_id):
     conn.close()
 
     if not record:
-        print(f"[WARN] No se encontraron datos para el registro {record_id}")
+        print(f"No se encontraron datos para el registro {record_id}")
         return None
 
     return build_pdf_from_record(record)
@@ -1304,24 +1252,21 @@ def send_medical_record_email(record_id):
     conn.close()
 
     if not data or not data.get("company_email"):
-        print(f"[WARN] Correo no enviado: datos no encontrados o email empresa faltante para registro {record_id}.")
+        print(f"Correo no enviado: datos no encontrados o correo de empresa faltante para registro {record_id}.")
         return False
 
     pdf_content = generate_medical_record_pdf(record_id)
     if not pdf_content:
-        print(f"[WARN] Correo no enviado: falló la generación de PDF para registro {record_id}.")
+        print(f"Correo no enviado: falló la generación de PDF para registro {record_id}.")
         return False
 
-    recipients = split_emails(data["company_email"])
+    recipients = [e.strip() for e in (data["company_email"] or "").split(",") if e.strip()]
     if not recipients:
-        print(f"[WARN] Correo no enviado: lista de destinatarios vacía para registro {record_id}.")
+        print(f"Correo no enviado: lista de destinatarios vacía para registro {record_id}.")
         return False
 
     msg = MIMEMultipart()
-    msg["Subject"] = (
-        f"Informe Médico del Paciente: {data['patient_name']} {data['patient_surname']} "
-        f"({data['record_date']})"
-    )
+    msg["Subject"] = f"Informe Médico del Paciente: {data['patient_name']} {data['patient_surname']} ({data['record_date']})"
     msg["From"] = EMAIL_SENDER
     msg["To"] = ", ".join(recipients)
 
@@ -1347,12 +1292,11 @@ def send_medical_record_email(record_id):
             server.starttls(context=context)
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.sendmail(EMAIL_SENDER, recipients, msg.as_string())
-        print(f"[INFO] Correo para registro {record_id} enviado a: {', '.join(recipients)}")
+        print(f"Correo para registro {record_id} enviado exitosamente a {data['company_email']}.")
         return True
     except Exception as e:
-        print(f"[ERROR] Error al enviar correo para registro {record_id}: {e}")
+        print(f"Error al enviar correo para registro {record_id}: {e}")
         return False
-
 
 @app.route("/medical_record/<int:record_id>/send_email", methods=["POST"])
 @login_required
@@ -1378,27 +1322,19 @@ def email_medical_record(record_id):
     company_name_display = info["company_name"] if info and info.get("company_name") else "la empresa (nombre no encontrado)"
 
     if not company_email_display:
-        flash(
-            f"No se pudo enviar el correo: Email de la empresa '{company_name_display}' no encontrado para el registro {record_id}.",
-            "danger",
-        )
+        flash(f"No se pudo enviar el correo: Email de la empresa '{company_name_display}' no encontrado para el registro {record_id}.", "danger")
         return redirect(url_for("home", search_patient_document=patient_document_number or ""))
 
+    # Ajuste que tenías en la versión vieja: si SMTP no está configurado, avisar y NO intentar enviar
     if not is_smtp_configured():
-        flash(
-            "La configuración SMTP no está completa (SMTP_USERNAME/SMTP_PASSWORD/EMAIL_SENDER). Configurala en Cloud Run y reintenta.",
-            "warning",
-        )
+        flash("La configuración SMTP no está completa (SMTP_USERNAME/SMTP_PASSWORD). Configurala en Cloud Run y reintenta.", "warning")
         return redirect(url_for("home", search_patient_document=patient_document_number or ""))
 
     success = send_medical_record_email(record_id)
     if success:
         flash(f"Correo enviado exitosamente a {company_email_display} ({company_name_display}).", "success")
     else:
-        flash(
-            f"Error al enviar el correo a {company_email_display} ({company_name_display}). Verifique la configuración y el log del servidor.",
-            "danger",
-        )
+        flash(f"Error al enviar el correo a {company_email_display} ({company_name_display}). Verifique la configuración y el log del servidor.", "danger")
 
     return redirect(url_for("home", search_patient_document=patient_document_number or ""))
 
@@ -1406,7 +1342,7 @@ def email_medical_record(record_id):
 # ----------------------------
 # Daily send (select companies + send grouped PDFs)
 # ----------------------------
-@app.route("/send_daily_reports/select_companies", methods=["GET"])
+@app.route("/send_daily_reports/select_companies", methods=["GET", "POST"])
 @login_required
 def select_companies_for_daily_send():
     conn = get_db_connection()
@@ -1429,7 +1365,6 @@ def select_companies_for_daily_send():
 
     return render_template("select_companies_send.html", companies=companies, today=today)
 
-
 @app.route("/send_daily_reports", methods=["POST"])
 @login_required
 def send_daily_reports():
@@ -1439,7 +1374,7 @@ def send_daily_reports():
         return redirect(url_for("select_companies_for_daily_send"))
 
     if not is_smtp_configured():
-        flash("No se puede enviar emails: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD/EMAIL_SENDER).", "warning")
+        flash("No se puede enviar emails: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD).", "warning")
         return redirect(url_for("select_companies_for_daily_send"))
 
     today = datetime.date.today()
@@ -1449,10 +1384,10 @@ def send_daily_reports():
 
     placeholders = ",".join(["%s"] * len(selected_company_ids))
     query = f"""
-        SELECT mr.id, c.email as company_email, c.name as company_name
-        FROM medical_records mr
-        JOIN companies c ON mr.company_id = c.id
-        WHERE mr.company_id IN ({placeholders}) AND DATE(mr.created_at) = %s
+    SELECT mr.id, c.email as company_email, c.name as company_name
+    FROM medical_records mr
+    JOIN companies c ON mr.company_id = c.id
+    WHERE mr.company_id IN ({placeholders}) AND DATE(mr.created_at) = %s
     """
     params = [*selected_company_ids, today]
 
@@ -1466,7 +1401,6 @@ def send_daily_reports():
     for r in records:
         grouped_records[(r["company_email"], r["company_name"])].append(r["id"])
 
-    sent_any = False
     for (email, name), record_ids in grouped_records.items():
         attachments = []
         for rid in record_ids:
@@ -1477,21 +1411,16 @@ def send_daily_reports():
         if attachments:
             success = send_multiple_pdfs_email(email, name, attachments)
             if success:
-                sent_any = True
                 flash(f"Correo enviado a {email} ({name}) con {len(attachments)} registros.", "success")
             else:
-                flash(f"Error al enviar correo a {email} ({name}).", "danger")
-
-    if not sent_any:
-        flash("No se encontraron registros para enviar hoy (o no se pudieron generar PDFs).", "warning")
+                flash(f"Error al enviar correo a {email}.", "danger")
 
     return redirect(url_for("home"))
 
-
 def send_multiple_pdfs_email(to_email, company_name, attachments):
-    recipients = split_emails(to_email)
+    recipients = [e.strip() for e in (to_email or "").split(",") if e.strip()]
     if not recipients:
-        print(f"[WARN] No se encontró email para la empresa {company_name}")
+        print(f"No se encontró email para la empresa {company_name}")
         return False
 
     msg = MIMEMultipart()
@@ -1517,10 +1446,9 @@ def send_multiple_pdfs_email(to_email, company_name, attachments):
             server.starttls(context=context)
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.sendmail(EMAIL_SENDER, recipients, msg.as_string())
-        print(f"[INFO] Daily email enviado a: {', '.join(recipients)} ({company_name}) adjuntos={len(attachments)}")
         return True
     except Exception as e:
-        print(f"[ERROR] Error al enviar correo a {recipients}: {e}")
+        print(f"Error al enviar correo a {recipients}: {e}")
         return False
 
 
