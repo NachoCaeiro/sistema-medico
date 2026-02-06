@@ -2,6 +2,7 @@ import os
 import socket
 import ssl
 import datetime
+from PIL import Image
 from io import BytesIO
 from flask import send_file
 from datetime import date
@@ -1165,16 +1166,37 @@ def build_pdf_from_record(record):
     pdf.set_text_color(*field_color)
     pdf.multi_cell(desc_w, 6, record.get("observations", "") or "", border=0)
 
-    # =========================
-    # FOOTER (fijo abajo)
-    # =========================
-    footer_path = static_path("img", "footer.jpg")
-    if os.path.exists(footer_path):
-        footer_y = PAGE_H - FOOTER_H - FOOTER_OFFSET
+   # =========================
+# FOOTER (fijo abajo, SIN deformar)
+# =========================
+footer_path = static_path("img", "footer.jpg")
+if os.path.exists(footer_path):
 
-        # recomendado: NO forzar h para que no se deforme
-        pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W, h=FOOTER_H)
-    return pdf.output(dest="S").encode("latin-1")
+    FOOTER_MAX_H = 20  # <-- probá 18 / 20 / 22 (mm). Esto lo hace menos "alto"
+    FOOTER_OFFSET = 8  # ya lo tenías
+
+    # posición del área de footer (pegado abajo)
+    footer_area_y = PAGE_H - FOOTER_MAX_H - FOOTER_OFFSET
+
+    # calcular tamaño proporcional
+    img_w_px, img_h_px = Image.open(footer_path).size
+    img_ratio = img_w_px / img_h_px  # w/h
+
+    # Queremos que entre en el alto máximo, manteniendo proporción.
+    h = FOOTER_MAX_H
+    w = h * img_ratio
+
+    # si queda más ancho que la hoja, limitamos por ancho y recalculamos alto
+    if w > PAGE_W:
+        w = PAGE_W
+        h = w / img_ratio
+
+    # centrar horizontalmente
+    x = (PAGE_W - w) / 2
+
+    # dibujar
+    pdf.image(footer_path, x=x, y=footer_area_y, w=w, h=h)
+return pdf.output(dest="S").encode("latin-1")
 
 
 
