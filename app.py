@@ -109,13 +109,17 @@ def init_db():
 
 def add_default_user():
     """
-    Recomendación: NO hardcodear credenciales en producción.
-    Podés setear:
-      DEFAULT_ADMIN_USER
-      DEFAULT_ADMIN_PASSWORD
+    Crea el usuario admin una sola vez usando variables de entorno.
+    Recomendado en Cloud Run: NO hardcodear.
     """
-    username = os.environ.get("DEFAULT_ADMIN_USER", "Juan Pablo Moya")
-    password = os.environ.get("DEFAULT_ADMIN_PASSWORD", "Victoria2024")
+
+    username = os.environ.get("ADMIN_USER")
+    password = os.environ.get("ADMIN_PASSWORD")
+
+    # Si no están seteadas, NO crear nada (evita crear con defaults inseguros)
+    if not username or not password:
+        print("[INFO] ADMIN_USER / ADMIN_PASSWORD no seteadas. No se crea usuario por defecto.")
+        return
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -125,7 +129,10 @@ def add_default_user():
     if user is None:
         password_hash = generate_password_hash(password)
         try:
-            cur.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s)", (username, password_hash))
+            cur.execute(
+                "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
+                (username, password_hash),
+            )
             conn.commit()
             print(f"Usuario '{username}' creado exitosamente.")
         except IntegrityError:
@@ -136,6 +143,7 @@ def add_default_user():
 
     cur.close()
     conn.close()
+
 
 
 # Inicializar DB al arrancar (CREATE TABLE IF NOT EXISTS es seguro)
