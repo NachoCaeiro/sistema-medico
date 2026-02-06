@@ -1117,7 +1117,7 @@ def build_pdf_from_record(record):
     if os.path.exists(footer_img):
         pdf.image(footer_img, x=10, y=250, w=150)
 
-    return pdf.output(dest="S")
+    return pdf.output(dest="S").encode("latin-1")
 
 
 @app.route("/medical_record/<int:record_id>/pdf")
