@@ -1120,26 +1120,24 @@ def build_pdf_from_record(record):
     # =========================
     y = pdf.get_y()
 
-    hline(y); y += 3
+    hline(y); 
     y = label_value("EMPRESA:", record.get("company_name", ""), y=y, label_w=28)
-    y += 2
 
-    hline(y); y += 3
+    hline(y); 
     full_name = f"{record.get('patient_name','')} {record.get('patient_surname','')}".strip()
     y = label_value("Nombre y Apellido:", full_name, y=y, label_w=45)
     y = label_value("DNI:", record.get("document_number", ""), y=y, label_w=12)
-    y += 2
 
-    hline(y); y += 3
+    hline(y); 
     section_title("EXAMEN", y=y)
     y = pdf.get_y()
     y = label_value("Fecha:", fmt_iso_to_ddmmyyyy(record.get("date")), y=y, label_w=15)
-    y += 2
 
     license_str = record.get("license_type") or ""
     lic_value = "Enfermedad Inculpable" if "Enfermedad Inculpable" in license_str else ("ART" if "ART" in license_str else "")
     y = label_value("Tipo de licencia:", lic_value, y=y, label_w=35)
-    y += 2
+
+
 
     section_title("Descripción:", y=y)
     pdf.set_font("Arial", "", 11)
@@ -1148,7 +1146,7 @@ def build_pdf_from_record(record):
     pdf.multi_cell(desc_w, 6, record.get("diagnosis", "") or "", border=0)
     y = pdf.get_y() + 2
 
-    hline(y); y += 3
+    hline(y); 
     section_title("LICENCIA", y=y)
     y = pdf.get_y()
 
@@ -1158,15 +1156,15 @@ def build_pdf_from_record(record):
     hasta = fmt_iso_to_ddmmyyyy(record.get("license_end"))
 
     pdf.set_y(y)
-    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(14, 6, "Desde:", 0, 0)
-    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(50, 6, desde, 0, 0)
+    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(13, 5, "Desde:", 0, 0)
+    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(45, 5, desde, 0, 0)
 
-    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(14, 6, "Hasta:", 0, 0)
-    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(0, 6, hasta, 0, 1)
+    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(13, 5, "Hasta:", 0, 0)
+    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(0, 5, hasta, 0, 1)
+
 
     y = pdf.get_y()
     y = label_value("Fecha reincorporación:", fmt_iso_to_ddmmyyyy(record.get("return_date")), y=y, label_w=45)
-    y += 2
 
     section_title("Observaciones:", y=y)
     pdf.set_font("Arial", "", 11)
