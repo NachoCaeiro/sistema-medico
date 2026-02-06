@@ -351,6 +351,8 @@ def add_company():
 
 @app.route("/edit_company/<int:company_id>", methods=["GET", "POST"])
 @login_required
+@app.route("/edit_company/<int:company_id>", methods=["GET", "POST"])
+@login_required
 def edit_company(company_id):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -405,8 +407,6 @@ def edit_company(company_id):
         cur.close()
         conn.close()
 
-
-        return redirect(url_for("home"))
 
     cur.execute("SELECT * FROM companies WHERE id = %s", (company_id,))
     company = cur.fetchone()
