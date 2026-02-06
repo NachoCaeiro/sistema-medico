@@ -1042,7 +1042,7 @@ def build_pdf_from_record(record):
     pdf.add_page()
 
     header_img = static_path("img", "header.jpg")
-    footer_img = static_path("img", "Footer.jpg")
+    footer_img = static_path("img", "footer.jpg")
 
     if os.path.exists(header_img):
         pdf.image(header_img, x=10, y=8, w=190)
