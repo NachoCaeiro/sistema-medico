@@ -1,6 +1,7 @@
 import os
 import socket
 import ssl
+import traceback
 import datetime
 from io import BytesIO
 from flask import send_file
@@ -1459,6 +1460,13 @@ def send_multiple_pdfs_email(to_email, company_name, attachments):
     except Exception as e:
         print(f"Error al enviar correo a {recipients}: {e}")
         return False
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    print("🔥 ERROR:", e)
+    traceback.print_exc()
+    return "Internal Server Error", 500
+
 
 
 if __name__ == "__main__":
