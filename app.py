@@ -1179,8 +1179,7 @@ def build_pdf_from_record(record):
     if os.path.exists(footer_path):
         footer_y = PAGE_H - FOOTER_H
         # recomendado: NO forzar h para que no se deforme
-        pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W)
-
+        pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W, h=FOOTER_H)
     return pdf.output(dest="S").encode("latin-1")
 
 
