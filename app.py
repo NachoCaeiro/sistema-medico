@@ -1028,12 +1028,13 @@ def delete_medical_record(record_id):
 def build_pdf_from_record(record):
     # --- Header / Footer sizes ---
     HEADER_H = 42
-    FOOTER_H = 20
+    FOOTER_H = 16          # <-- más chico (antes 20)
+    FOOTER_OFFSET = 2      # <-- sube menos (antes 4)
 
     pdf = FPDF(format="A4", unit="mm")
 
-    FOOTER_OFFSET = 4
-    pdf.set_auto_page_break(auto=True, margin=FOOTER_H + FOOTER_OFFSET + 4)
+    # Reservar espacio para que el texto no pise el footer
+    pdf.set_auto_page_break(auto=True, margin=FOOTER_H + FOOTER_OFFSET + 3)
 
     pdf.add_page()
 
@@ -1062,25 +1063,26 @@ def build_pdf_from_record(record):
         pdf.set_line_width(0.8)
         pdf.line(LEFT, y, PAGE_W - RIGHT, y)
 
-    def label_value(label, value, y=None, label_w=38, gap=1, font_size=10, line_h=5):
-    if y is not None:
-        pdf.set_y(y)
+    # ✅ FIX: indentación correcta + más compacto
+    def label_value(label, value, y=None, label_w=32, gap=1, font_size=10, line_h=5):
+        if y is not None:
+            pdf.set_y(y)
 
-    x0 = LEFT
-    y0 = pdf.get_y()
+        x0 = LEFT
+        y0 = pdf.get_y()
 
-    pdf.set_xy(x0, y0)
-    pdf.set_font("Arial", "B", font_size)
-    pdf.set_text_color(*title_color)
-    pdf.cell(label_w, line_h, label, border=0)
+        pdf.set_xy(x0, y0)
+        pdf.set_font("Arial", "B", font_size)
+        pdf.set_text_color(*title_color)
+        pdf.cell(label_w, line_h, label, border=0)
 
-    pdf.set_xy(x0 + label_w + gap, y0)
-    pdf.set_font("Arial", "", font_size)
-    pdf.set_text_color(*field_color)
+        pdf.set_xy(x0 + label_w + gap, y0)
+        pdf.set_font("Arial", "", font_size)
+        pdf.set_text_color(*field_color)
 
-    value_w = (PAGE_W - RIGHT) - (x0 + label_w + gap)
-    pdf.multi_cell(value_w, line_h, value or "", border=0)
-    return pdf.get_y()
+        value_w = (PAGE_W - RIGHT) - (x0 + label_w + gap)
+        pdf.multi_cell(value_w, line_h, value or "", border=0)
+        return pdf.get_y()
 
     def section_title(text, y=None):
         if y is not None:
@@ -1104,25 +1106,26 @@ def build_pdf_from_record(record):
     y = pdf.get_y()
 
     hline(y); y += 2
-    y = label_value("EMPRESA:", record.get("company_name", ""), y=y, label_w=28)
+    y = label_value("EMPRESA:", record.get("company_name", ""), y=y, label_w=24)  # <-- más cerca
     y += 1
 
     hline(y); y += 2
     full_name = f"{record.get('patient_name','')} {record.get('patient_surname','')}".strip()
-    y = label_value("Nombre y Apellido:", full_name, y=y, label_w=45)
-    y = label_value("DNI:", record.get("document_number", ""), y=y, label_w=12)
+    y = label_value("Nombre y Apellido:", full_name, y=y, label_w=40)            # <-- más cerca
+    y = label_value("DNI:", record.get("document_number", ""), y=y, label_w=10) # <-- más cerca
     y += 1
 
     hline(y); y += 2
     section_title("EXAMEN", y=y)
     y = pdf.get_y()
 
-    y = label_value("Fecha:", fmt_iso_to_ddmmyyyy(record.get("date")), y=y, label_w=12, gap=1)
+    # ✅ campos clave “pegados”
+    y = label_value("Fecha:", fmt_iso_to_ddmmyyyy(record.get("date")), y=y, label_w=12)
     y += 1
 
     license_str = record.get("license_type") or ""
     lic_value = "Enfermedad Inculpable" if "Enfermedad Inculpable" in license_str else ("ART" if "ART" in license_str else "")
-    y = label_value("Tipo de licencia:", lic_value, y=y, label_w=35)
+    y = label_value("Tipo de licencia:", lic_value, y=y, label_w=30)  # <-- más cerca
     y += 1
 
     section_title("Descripción:", y=y)
@@ -1136,21 +1139,21 @@ def build_pdf_from_record(record):
     section_title("LICENCIA", y=y)
     y = pdf.get_y()
 
-    y = label_value("Días justificados:", str(record.get("justified_days") or ""), y=y, label_w=34, gap=1)
+    y = label_value("Días justificados:", str(record.get("justified_days") or ""), y=y, label_w=30)  # <-- más cerca
     y += 1
 
     desde = fmt_iso_to_ddmmyyyy(record.get("license_start"))
     hasta = fmt_iso_to_ddmmyyyy(record.get("license_end"))
 
     pdf.set_y(y)
-    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(14, 6, "Desde:", 0, 0)
-    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(50, 6, desde, 0, 0)
+    pdf.set_font("Arial", "B", 10); pdf.set_text_color(*title_color); pdf.cell(12, 5, "Desde:", 0, 0)
+    pdf.set_font("Arial", "", 10);  pdf.set_text_color(*field_color); pdf.cell(45, 5, desde, 0, 0)
 
-    pdf.set_font("Arial", "B", 11); pdf.set_text_color(*title_color); pdf.cell(14, 6, "Hasta:", 0, 0)
-    pdf.set_font("Arial", "", 11);  pdf.set_text_color(*field_color); pdf.cell(0, 6, hasta, 0, 1)
+    pdf.set_font("Arial", "B", 10); pdf.set_text_color(*title_color); pdf.cell(12, 5, "Hasta:", 0, 0)
+    pdf.set_font("Arial", "", 10);  pdf.set_text_color(*field_color); pdf.cell(0, 5, hasta, 0, 1)
 
     y = pdf.get_y()
-    y = label_value("Fecha reincorporación:", fmt_iso_to_ddmmyyyy(record.get("return_date")), y=y, label_w=45)
+    y = label_value("Fecha reincorporación:", fmt_iso_to_ddmmyyyy(record.get("return_date")), y=y, label_w=38)  # <-- más cerca
     y += 1
 
     section_title("Observaciones:", y=y)
@@ -1165,6 +1168,7 @@ def build_pdf_from_record(record):
         pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W, h=FOOTER_H)
 
     return pdf.output(dest="S").encode("latin-1")
+
 
 
 
