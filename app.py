@@ -4,7 +4,6 @@ import ssl
 import datetime
 from io import BytesIO
 from flask import send_file
-
 from datetime import date
 from collections import defaultdict
 from functools import wraps
@@ -13,7 +12,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2 import IntegrityError
 
-from flask import Flask, render_template, request, redirect, url_for, session, make_response, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 from fpdf import FPDF
 
@@ -24,34 +23,37 @@ from email.mime.application import MIMEApplication
 
 
 # ----------------------------
-# App + Config (Cloud Run)
+# App + Config (Cloud Run + Neon)
 # ----------------------------
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
 SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USERNAME = os.environ["SMTP_USERNAME"]
-SMTP_PASSWORD = os.environ["SMTP_PASSWORD"]
-EMAIL_SENDER = os.environ.get("EMAIL_SENDER", SMTP_USERNAME)
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME")  # puede no estar seteado en dev
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")  # App Password
+EMAIL_SENDER = os.environ.get("EMAIL_SENDER") or (SMTP_USERNAME or "")
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 def get_today_iso():
     return date.today().isoformat()
 
+def is_smtp_configured() -> bool:
+    """Valida que haya credenciales SMTP reales seteadas (Cloud Run)."""
+    return bool(SMTP_USERNAME and SMTP_PASSWORD and SMTP_SERVER and SMTP_PORT)
 
 # ----------------------------
 # Neon (PostgreSQL)
 # ----------------------------
 def get_db_connection():
+    # DATABASE_URL esperado: postgresql://user:pass@host/db?sslmode=require
+    # En Neon suele incluir sslmode=require; igual forzamos sslmode=require acá.
     return psycopg2.connect(
         os.environ["DATABASE_URL"],
         cursor_factory=RealDictCursor,
         sslmode="require"
     )
-
-
 
 def init_db():
     conn = get_db_connection()
@@ -109,13 +111,11 @@ def init_db():
     cur.close()
     conn.close()
 
-
 def add_default_user():
     """
     Crea el usuario admin una sola vez usando variables de entorno.
     Recomendado en Cloud Run: NO hardcodear.
     """
-
     username = os.environ.get("ADMIN_USER")
     password = os.environ.get("ADMIN_PASSWORD")
 
@@ -147,10 +147,8 @@ def add_default_user():
     cur.close()
     conn.close()
 
-
-
 # Inicializar DB al arrancar (CREATE TABLE IF NOT EXISTS es seguro)
-# En Cloud Run puede ejecutarse por instancia/worker, pero no rompe.
+# En Cloud Run puede ejecutarse por instancia, pero no rompe.
 if os.environ.get("INIT_DB_ON_STARTUP", "1") == "1":
     try:
         init_db()
@@ -171,7 +169,6 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-
 def parse_date(value):
     """Convierte 'YYYY-MM-DD' a date, o devuelve None."""
     if not value:
@@ -182,15 +179,6 @@ def parse_date(value):
         return datetime.date.fromisoformat(str(value))
     except Exception:
         return None
-
-
-def fmt_date_ddmmyyyy(value):
-    """Formatea date/datetime/str a dd/mm/yyyy."""
-    d = parse_date(value)
-    if not d:
-        return ""
-    return d.strftime("%d/%m/%Y")
-
 
 def static_path(*parts):
     return os.path.join(BASE_DIR, "static", *parts)
@@ -221,7 +209,6 @@ def login():
         error = "Usuario o contraseña incorrectos. Por favor, intente de nuevo."
 
     return render_template("login.html", error=error)
-
 
 @app.route("/logout")
 def logout():
@@ -342,6 +329,7 @@ def add_company():
             flash("Empresa agregada exitosamente.", "success")
         except IntegrityError:
             conn.rollback()
+            # OJO: si NO tenés un UNIQUE en email, esto no se disparará.
             flash("Error: El correo electrónico ya existe para otra empresa.", "danger")
             return (
                 render_template(
@@ -359,7 +347,6 @@ def add_company():
         return redirect(url_for("home"))
 
     return render_template("company_form.html", form_action_url=url_for("add_company"))
-
 
 @app.route("/edit_company/<int:company_id>", methods=["GET", "POST"])
 @login_required
@@ -420,7 +407,6 @@ def edit_company(company_id):
         company=company,
         form_action_url=url_for("edit_company", company_id=company_id),
     )
-
 
 @app.route("/delete_company/<int:company_id>", methods=["POST"])
 @login_required
@@ -531,7 +517,6 @@ def add_patient():
     conn.close()
     return render_template("patient_form.html", companies=companies_data, form_action_url=url_for("add_patient"))
 
-
 @app.route("/edit_patient/<int:patient_id>", methods=["GET", "POST"])
 @login_required
 def edit_patient(patient_id):
@@ -624,7 +609,6 @@ def edit_patient(patient_id):
         form_action_url=url_for("edit_patient", patient_id=patient_id),
     )
 
-
 @app.route("/delete_patient/<int:patient_id>", methods=["POST"])
 @login_required
 def delete_patient(patient_id):
@@ -646,7 +630,6 @@ def delete_patient(patient_id):
 
     return redirect(url_for("home"))
 
-
 def get_patient_company_id(patient_id):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -667,11 +650,12 @@ def add_medical_record():
     cur = conn.cursor()
 
     if request.method == "POST":
-        action = request.form.get("action")  # guardar o guardar y enviar
+        action = request.form.get("action")  # save o save_and_send
 
         patient_id_form = request.form.get("patient_id", type=int)
         diagnosis = request.form["diagnosis"]
-        visit_date = parse_date(request.form["date"])  # DATE
+        visit_date = parse_date(request.form["date"])
+
         license_type_list = request.form.getlist("license_type")
         license_type = ", ".join(license_type_list) if license_type_list else None
 
@@ -755,8 +739,11 @@ def add_medical_record():
             conn.close()
 
         if action == "save_and_send":
-            success = send_medical_record_email(new_record_id)
-            flash("Correo enviado exitosamente." if success else "Error al enviar el correo.", "success" if success else "danger")
+            if not is_smtp_configured():
+                flash("No se puede enviar email: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD).", "warning")
+            else:
+                success = send_medical_record_email(new_record_id)
+                flash("Correo enviado exitosamente." if success else "Error al enviar el correo.", "success" if success else "danger")
 
         patient_doc_conn = get_db_connection()
         doc_cur = patient_doc_conn.cursor()
@@ -780,7 +767,6 @@ def add_medical_record():
         form_action_url=url_for("add_medical_record"),
         current_date=get_today_iso(),
     )
-
 
 @app.route("/add_medical_record/<int:patient_id>", methods=["GET", "POST"])
 @login_required
@@ -858,8 +844,11 @@ def add_medical_record_for_patient(patient_id):
             conn.commit()
 
             if request.form.get("action") == "save_and_send":
-                send_medical_record_email(record_id)
-                flash("Registro médico agregado y enviado por correo.", "success")
+                if not is_smtp_configured():
+                    flash("No se puede enviar email: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD).", "warning")
+                else:
+                    send_medical_record_email(record_id)
+                    flash("Registro médico agregado y enviado por correo.", "success")
             else:
                 flash("Registro médico agregado exitosamente para el paciente.", "success")
 
@@ -892,7 +881,6 @@ def add_medical_record_for_patient(patient_id):
         form_action_url=url_for("add_medical_record_for_patient", patient_id=patient_id),
         current_date=get_today_iso(),
     )
-
 
 @app.route("/edit_medical_record/<int:record_id>", methods=["GET", "POST"])
 @login_required
@@ -996,7 +984,6 @@ def edit_medical_record(record_id):
         form_action_url=url_for("edit_medical_record", record_id=record_id),
     )
 
-
 @app.route("/delete_medical_record/<int:record_id>", methods=["POST"])
 @login_required
 def delete_medical_record(record_id):
@@ -1033,6 +1020,10 @@ def delete_medical_record(record_id):
         return redirect(url_for("home", search_patient_document=patient_doc_for_redirect))
     return redirect(url_for("home"))
 
+
+# ----------------------------
+# PDF (NO CAMBIAR – dejé tus funciones tal cual en tu repo)
+# ----------------------------
 def build_pdf_from_record(record):
     # --- Header / Footer sizes ---
     HEADER_H = 42
@@ -1187,6 +1178,7 @@ def build_pdf_from_record(record):
 
 
 
+
 @app.route("/medical_record/<int:record_id>/pdf")
 @login_required
 def download_medical_record_pdf(record_id):
@@ -1195,7 +1187,6 @@ def download_medical_record_pdf(record_id):
         flash("No se pudo generar el PDF: Registro médico no encontrado.", "warning")
         return redirect(url_for("home"))
 
-    # Asegurar bytes sí o sí
     if isinstance(pdf_content, str):
         pdf_content = pdf_content.encode("latin-1")
     elif isinstance(pdf_content, bytearray):
@@ -1206,10 +1197,8 @@ def download_medical_record_pdf(record_id):
         mimetype="application/pdf",
         as_attachment=False,
         download_name=f"medical_record_{record_id}.pdf",
-        max_age=0,  # evita cache
+        max_age=0,
     )
-
-
 
 def generate_medical_record_pdf(record_id):
     conn = get_db_connection()
@@ -1272,6 +1261,9 @@ def send_medical_record_email(record_id):
         return False
 
     recipients = [e.strip() for e in (data["company_email"] or "").split(",") if e.strip()]
+    if not recipients:
+        print(f"Correo no enviado: lista de destinatarios vacía para registro {record_id}.")
+        return False
 
     msg = MIMEMultipart()
     msg["Subject"] = f"Informe Médico del Paciente: {data['patient_name']} {data['patient_surname']} ({data['record_date']})"
@@ -1306,7 +1298,6 @@ def send_medical_record_email(record_id):
         print(f"Error al enviar correo para registro {record_id}: {e}")
         return False
 
-
 @app.route("/medical_record/<int:record_id>/send_email", methods=["POST"])
 @login_required
 def email_medical_record(record_id):
@@ -1332,6 +1323,11 @@ def email_medical_record(record_id):
 
     if not company_email_display:
         flash(f"No se pudo enviar el correo: Email de la empresa '{company_name_display}' no encontrado para el registro {record_id}.", "danger")
+        return redirect(url_for("home", search_patient_document=patient_document_number or ""))
+
+    # Ajuste que tenías en la versión vieja: si SMTP no está configurado, avisar y NO intentar enviar
+    if not is_smtp_configured():
+        flash("La configuración SMTP no está completa (SMTP_USERNAME/SMTP_PASSWORD). Configurala en Cloud Run y reintenta.", "warning")
         return redirect(url_for("home", search_patient_document=patient_document_number or ""))
 
     success = send_medical_record_email(record_id)
@@ -1369,13 +1365,16 @@ def select_companies_for_daily_send():
 
     return render_template("select_companies_send.html", companies=companies, today=today)
 
-
 @app.route("/send_daily_reports", methods=["POST"])
 @login_required
 def send_daily_reports():
     selected_company_ids = request.form.getlist("company_ids")
     if not selected_company_ids:
         flash("No se seleccionó ninguna empresa.", "warning")
+        return redirect(url_for("select_companies_for_daily_send"))
+
+    if not is_smtp_configured():
+        flash("No se puede enviar emails: faltan variables SMTP (SMTP_USERNAME/SMTP_PASSWORD).", "warning")
         return redirect(url_for("select_companies_for_daily_send"))
 
     today = datetime.date.today()
@@ -1418,10 +1417,10 @@ def send_daily_reports():
 
     return redirect(url_for("home"))
 
-
 def send_multiple_pdfs_email(to_email, company_name, attachments):
     recipients = [e.strip() for e in (to_email or "").split(",") if e.strip()]
     if not recipients:
+        print(f"No se encontró email para la empresa {company_name}")
         return False
 
     msg = MIMEMultipart()
