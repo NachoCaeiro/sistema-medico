@@ -1207,7 +1207,7 @@ def build_pdf_from_record(record):
     # =========================
     # FOOTER (fijo abajo)
     # =========================
-    footer_path = "static/img/Footer.jpg"
+    footer_path = "static/img/footer.jpg"
     if os.path.exists(footer_path):
         footer_y = PAGE_H - FOOTER_H  # fijo abajo
         pdf.image(footer_path, x=0, y=footer_y, w=PAGE_W)  # full width, legible
