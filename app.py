@@ -1042,28 +1042,25 @@ def build_pdf_from_record(record):
     footer_img = static_path("img", "footer.jpg")
 
     # --- HEADER ---
-    # Ajustá estos valores a tu imagen real
-    HEADER_H = 28  # altura del header en mm (probá 22-35)
-    if os.path.exists(header_img):
-        print("BASE_DIR:", BASE_DIR)
-print("Header path:", header_img, "exists:", os.path.exists(header_img))
-print("Footer path:", footer_img, "exists:", os.path.exists(footer_img))
+    # Si querés que el contenido empiece más abajo, subí este valor (ej 45-55)
+    CONTENT_START_Y = 45
 
-        pdf.image(header_img, x=0, y=0, w=210, h=HEADER_H)  # A4 ancho 210mm
+    if os.path.exists(header_img):
+        # Header a ancho completo (mantiene proporción)
+        pdf.image(header_img, x=0, y=0, w=210)
 
     # --- FOOTER ---
-    FOOTER_H = 22  # altura del footer en mm (probá 15-25)
+    # Bajá/subí la altura del footer acá (15-22 suele quedar bien)
+    FOOTER_H = 18
     if os.path.exists(footer_img):
-        footer_y = 297 - FOOTER_H  # A4 alto 297mm
+        footer_y = 297 - FOOTER_H
+        # Importante: forzar tamaño para que NO se haga gigante
         pdf.image(footer_img, x=0, y=footer_y, w=210, h=FOOTER_H)
 
-    # --- Contenido: arrancá debajo del header ---
-    y = HEADER_H + 15  # margen debajo del header
-    pdf.set_xy(25, y)
-
+    # --- Estilos ---
     title_color = (33, 37, 104)
     field_color = (0, 0, 0)
-    line_color = (86, 189, 181)
+    line_color  = (86, 189, 181)
 
     pdf.set_draw_color(*line_color)
     pdf.set_line_width(0.8)
@@ -1081,22 +1078,29 @@ print("Footer path:", footer_img, "exists:", os.path.exists(footer_img))
         pdf.set_text_color(*field_color)
         pdf.cell(120, 10, value or "")
 
-    # Acá seguís con tu layout tal cual, pero usando el y inicial:
+    # --- Contenido (acá es donde antes tenías y=60) ---
+    y = CONTENT_START_Y
+
     pdf.line(25, y, 200, y)
     add_label_value("EMPRESA:", record.get("company_name", ""), y + 2, x_value=50)
     y += 12
 
     pdf.line(25, y, 200, y)
-    add_label_value("Nombre y Apellido:",
-                    f"{record.get('patient_name','')} {record.get('patient_surname','')}",
-                    y + 2, x_value=65)
+    add_label_value(
+        "Nombre y Apellido:",
+        f"{record.get('patient_name','')} {record.get('patient_surname','')}",
+        y + 2,
+        x_value=65
+    )
     y += 10
+
     add_label_value("DNI:", record.get("document_number", ""), y + 2, x_value=35)
     y += 12
 
-    # ... (resto igual)
+    # ... seguís con tu layout igual que antes usando la variable y ...
 
     return pdf.output(dest="S").encode("latin-1")
+
 
 
 
