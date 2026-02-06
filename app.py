@@ -1027,9 +1027,9 @@ def build_pdf_from_record(record):
     # -------------------------
     HEADER_H = 42
 
-    # Footer chico visible (alto fijo)
-    FOOTER_BOX_H = 18        # alto reservado para el footer
-    FOOTER_OFFSET = 8        # margen extra de seguridad
+    # Reservar espacio para que el contenido NO pise el footer
+    FOOTER_BOX_H = 22   # espacio reservado (un poco más que el alto real del footer)
+    FOOTER_OFFSET = 8   # margen de seguridad extra
 
     pdf = FPDF(format="A4", unit="mm")
     pdf.set_auto_page_break(auto=True, margin=FOOTER_BOX_H + FOOTER_OFFSET)
@@ -1050,7 +1050,7 @@ def build_pdf_from_record(record):
     if os.path.exists(header_path):
         pdf.image(header_path, x=0, y=0, w=PAGE_W)
 
-    # Arranca contenido más abajo (un poco menos que antes)
+    # Arranca contenido
     CONTENT_TOP = HEADER_H + 18
     pdf.set_y(CONTENT_TOP)
 
@@ -1086,10 +1086,6 @@ def build_pdf_from_record(record):
             return str(val)
 
     def label_value(label, value, y=None, label_w=32, font_size=11, line_h=6):
-        """
-        Label + value alineados (sin espacio gigante).
-        Si el value es largo, baja con multi_cell, pero empieza pegado al label.
-        """
         if y is not None:
             pdf.set_y(y)
 
@@ -1097,21 +1093,17 @@ def build_pdf_from_record(record):
         y0 = pdf.get_y()
         value = value or ""
 
-        # Label
         pdf.set_xy(x0, y0)
         pdf.set_font("Arial", "B", font_size)
         pdf.set_text_color(*title_color)
         pdf.cell(label_w, line_h, label, border=0)
 
-        # Value (arranca justo al lado)
         pdf.set_xy(x0 + label_w, y0)
         pdf.set_font("Arial", "", font_size)
         pdf.set_text_color(*field_color)
 
         value_w = (PAGE_W - RIGHT) - (x0 + label_w)
-        # multi_cell baja si hace falta, pero no deja hueco
         pdf.multi_cell(value_w, line_h, value, border=0)
-
         return pdf.get_y()
 
     # =========================
@@ -1140,7 +1132,6 @@ def build_pdf_from_record(record):
     y = label_value("Tipo de licencia:", tipo_lic, y=y, label_w=35)
     y += 2
 
-    # Descripción (bloque)
     pdf.set_font("Arial", "B", 11)
     pdf.set_text_color(*title_color)
     pdf.cell(0, 6, "Descripción:", ln=1)
@@ -1158,7 +1149,6 @@ def build_pdf_from_record(record):
     desde = fmt_date(record.get("license_start"))
     hasta = fmt_date(record.get("license_end"))
 
-    # Desde / Hasta en una línea
     pdf.set_font("Arial", "B", 11)
     pdf.set_text_color(*title_color)
     pdf.cell(14, 6, "Desde:", 0, 0)
@@ -1185,20 +1175,22 @@ def build_pdf_from_record(record):
     pdf.set_text_color(*field_color)
     pdf.multi_cell(PAGE_W - LEFT - RIGHT, 6, record.get("observations", "") or "")
 
+    # =========================
+    # FOOTER (chico, centrado)
+    # =========================
+    footer_path = static_path("img", "footer.jpg")
+    if os.path.exists(footer_path):
+        FOOTER_W = 155   # ajustá si querés
+        FOOTER_H = 18
 
-footer_path = static_path("img", "footer.jpg")
-if os.path.exists(footer_path):
-    FOOTER_W = 150   # ancho (ajustable)
-    FOOTER_H = 18    # alto (ajustable)
+        footer_x = (PAGE_W - FOOTER_W) / 2
+        footer_y = PAGE_H - FOOTER_H - 6  # 6mm arriba del borde
 
-    footer_x = (PAGE_W - FOOTER_W) / 2
-    footer_y = PAGE_H - FOOTER_H - 6  # 6mm arriba del borde
-
-    pdf.image(footer_path, x=footer_x, y=footer_y, w=FOOTER_W, h=FOOTER_H)
-
+        pdf.image(footer_path, x=footer_x, y=footer_y, w=FOOTER_W, h=FOOTER_H)
+    else:
+        print(f"[WARN] No existe footer en: {footer_path}")
 
     return pdf.output(dest="S").encode("latin-1")
-
 
 
 
