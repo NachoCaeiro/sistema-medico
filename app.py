@@ -4,7 +4,7 @@ import ssl
 import datetime
 from io import BytesIO
 from flask import send_file
-from datetime import date
+from datetime import datetime, date
 from collections import defaultdict
 from functools import wraps
 
@@ -170,15 +170,15 @@ def login_required(f):
     return decorated_function
 
 def parse_date(value):
-    """Convierte 'YYYY-MM-DD' a date, o devuelve None."""
     if not value:
         return None
-    if isinstance(value, (datetime.date, datetime.datetime)):
-        return value.date() if isinstance(value, datetime.datetime) else value
+    if isinstance(value, (date, datetime)):
+        return value.date() if isinstance(value, datetime) else value
     try:
-        return datetime.date.fromisoformat(str(value))
+        return date.fromisoformat(str(value))
     except Exception:
         return None
+
 
 def static_path(*parts):
     return os.path.join(BASE_DIR, "static", *parts)
