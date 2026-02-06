@@ -1021,39 +1021,30 @@ def delete_medical_record(record_id):
     return redirect(url_for("home"))
 
 def build_pdf_from_record(record):
-    # -------------------------
-    # Config general
-    # -------------------------
     HEADER_H = 42
 
-    # Footer (más grande)
-    FOOTER_W = 190
-    FOOTER_H = 26
-    FOOTER_BOTTOM_PAD = 6  # separación del borde inferior
-
-    # margin para que el contenido no pise el footer
-    FOOTER_MARGIN = FOOTER_H + FOOTER_BOTTOM_PAD + 6
+    # ✅ Footer grande
+    FOOTER_W = 205          # casi todo el ancho
+    FOOTER_H = 48           # bien alto (probá 42-55)
+    FOOTER_BOTTOM_PAD = 4
+    FOOTER_MARGIN = FOOTER_H + FOOTER_BOTTOM_PAD + 8  # para que el texto no pise el footer
 
     pdf = FPDF(format="A4", unit="mm")
     pdf.set_auto_page_break(auto=True, margin=FOOTER_MARGIN)
     pdf.add_page()
 
-    PAGE_W = pdf.w   # 210
-    PAGE_H = pdf.h   # 297
+    PAGE_W = pdf.w
+    PAGE_H = pdf.h
 
-    # Colores
     title_color = (33, 37, 104)
     field_color = (0, 0, 0)
     line_color = (86, 189, 181)
 
-    # =========================
     # HEADER
-    # =========================
     header_path = static_path("img", "header.jpg")
     if os.path.exists(header_path):
         pdf.image(header_path, x=0, y=0, w=PAGE_W)
 
-    # Arranca contenido
     CONTENT_TOP = HEADER_H + 18
     pdf.set_y(CONTENT_TOP)
 
@@ -1062,9 +1053,6 @@ def build_pdf_from_record(record):
     pdf.set_left_margin(LEFT)
     pdf.set_right_margin(RIGHT)
 
-    # -------------------------
-    # Helpers
-    # -------------------------
     def hline(y):
         pdf.set_draw_color(*line_color)
         pdf.set_line_width(0.8)
@@ -1109,11 +1097,8 @@ def build_pdf_from_record(record):
         pdf.multi_cell(value_w, line_h, value, border=0)
         return pdf.get_y()
 
-    # =========================
     # CONTENIDO
-    # =========================
     y = pdf.get_y()
-
     hline(y); y += 3
     y = label_value("EMPRESA:", record.get("company_name", ""), y=y, label_w=25)
     y += 3
@@ -1178,24 +1163,17 @@ def build_pdf_from_record(record):
     pdf.set_text_color(*field_color)
     pdf.multi_cell(PAGE_W - LEFT - RIGHT, 6, record.get("observations", "") or "")
 
-# =========================
-# FOOTER (bien grande, centrado)
-# =========================
-footer_path = static_path("img", "footer.jpg")
-if os.path.exists(footer_path):
-    FOOTER_W = 205          # casi todo el ancho (A4=210)
-    FOOTER_H = 48           # mucho más alto (probá 42-55)
-    FOOTER_BOTTOM_PAD = 4   # más pegado al borde
-
-    footer_x = (PAGE_W - FOOTER_W) / 2
-    footer_y = PAGE_H - FOOTER_H - FOOTER_BOTTOM_PAD
-
-    pdf.image(footer_path, x=footer_x, y=footer_y, w=FOOTER_W, h=FOOTER_H)
-else:
-    print(f"[WARN] No existe footer en: {footer_path}")
-
+    # ✅ FOOTER grande, centrado
+    footer_path = static_path("img", "footer.jpg")
+    if os.path.exists(footer_path):
+        footer_x = (PAGE_W - FOOTER_W) / 2
+        footer_y = PAGE_H - FOOTER_H - FOOTER_BOTTOM_PAD
+        pdf.image(footer_path, x=footer_x, y=footer_y, w=FOOTER_W, h=FOOTER_H)
+    else:
+        print(f"[WARN] No existe footer en: {footer_path}")
 
     return pdf.output(dest="S").encode("latin-1")
+
 
 
 @app.route("/medical_record/<int:record_id>/pdf")
