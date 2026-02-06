@@ -1044,9 +1044,10 @@ def build_pdf_from_record(record):
     header_img = static_path("img", "header.jpg")
     footer_img = static_path("img", "footer.jpg")
 
+    # Footer (si existe)
     if os.path.exists(footer_img):
-    footer_y = pdf.h - 35   # ajustá 35 según qué tan alto sea tu footer
-    pdf.image(footer_img, x=10, y=footer_y, w=190)
+        footer_y = pdf.h - 35  # ajustá 35 según qué tan alto sea tu footer
+        pdf.image(footer_img, x=10, y=footer_y, w=190)
     else:
         pdf.ln(10)
 
@@ -1077,7 +1078,12 @@ def build_pdf_from_record(record):
     y += 12
 
     pdf.line(25, y, 200, y)
-    add_label_value("Nombre y Apellido:", f"{record.get('patient_name','')} {record.get('patient_surname','')}", y + 2, x_value=65)
+    add_label_value(
+        "Nombre y Apellido:",
+        f"{record.get('patient_name','')} {record.get('patient_surname','')}",
+        y + 2,
+        x_value=65,
+    )
     y += 10
     add_label_value("DNI:", record.get("document_number", ""), y + 2, x_value=35)
     y += 12
@@ -1089,7 +1095,11 @@ def build_pdf_from_record(record):
     y += 10
 
     license_text = record.get("license_type") or ""
-    license_value = "Enfermedad Inculpable" if "Enfermedad Inculpable" in license_text else ("ART" if "ART" in license_text else "")
+    license_value = (
+        "Enfermedad Inculpable"
+        if "Enfermedad Inculpable" in license_text
+        else ("ART" if "ART" in license_text else "")
+    )
     add_label_value("Tipo de licencia:", license_value, y, x_value=60)
     y += 12
 
@@ -1117,10 +1127,8 @@ def build_pdf_from_record(record):
     pdf.set_font("Arial", "", 12)
     pdf.multi_cell(160, 8, record.get("observations") or "", border=0)
 
-    if os.path.exists(footer_img):
-        pdf.image(footer_img, x=10, y=250, w=150)
-
     return pdf.output(dest="S").encode("latin-1")
+
 
 
 @app.route("/medical_record/<int:record_id>/pdf")
