@@ -1036,7 +1036,7 @@ def delete_medical_record(record_id):
 def build_pdf_from_record(record):
     # --- Header / Footer sizes ---
     HEADER_H = 42
-    FOOTER_H = 20  # probá 45 / 50
+    FOOTER_H = 28  # probá 45 / 50
 
     pdf = FPDF(format="A4", unit="mm")
 
