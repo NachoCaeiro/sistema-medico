@@ -354,43 +354,57 @@ def add_company():
 def edit_company(company_id):
     conn = get_db_connection()
     cur = conn.cursor()
+    try:
+        if request.method == "POST":
+            name = request.form["name"]
+            address = request.form["address"]
+            phone = request.form["phone"]
+            email = request.form["email"]
 
-    if request.method == "POST":
-        name = request.form["name"]
-        address = request.form["address"]
-        phone = request.form["phone"]
-        email = request.form["email"]
+            try:
+                cur.execute(
+                    """
+                    UPDATE companies
+                    SET name = %s, address = %s, phone = %s, email = %s
+                    WHERE id = %s
+                    """,
+                    (name, address, phone, email, company_id),
+                )
+                conn.commit()
+                flash("Empresa actualizada exitosamente.", "success")
+                return redirect(url_for("home"))
+            except IntegrityError:
+                conn.rollback()
+                flash("Error: El correo electrónico ya existe para otra empresa.", "danger")
+                company_data_for_form = dict(request.form)
+                company_data_for_form["id"] = company_id
+                return (
+                    render_template(
+                        "company_form.html",
+                        company=company_data_for_form,
+                        form_action_url=url_for("edit_company", company_id=company_id),
+                        error="El correo electrónico ya existe.",
+                    ),
+                    400,
+                )
 
-        try:
-            cur.execute(
-                """
-                UPDATE companies
-                SET name = %s, address = %s, phone = %s, email = %s
-                WHERE id = %s
-                """,
-                (name, address, phone, email, company_id),
-            )
-            conn.commit()
-            flash("Empresa actualizada exitosamente.", "success")
-        except IntegrityError:
-            conn.rollback()
-            flash("Error: El correo electrónico ya existe para otra empresa.", "danger")
-            company_data_for_form = dict(request.form)
-            company_data_for_form["id"] = company_id
-            cur.close()
-            conn.close()
-            return (
-                render_template(
-                    "company_form.html",
-                    company=company_data_for_form,
-                    form_action_url=url_for("edit_company", company_id=company_id),
-                    error="El correo electrónico ya existe.",
-                ),
-                400,
-            )
-        finally:
-            cur.close()
-            conn.close()
+        # GET
+        cur.execute("SELECT * FROM companies WHERE id = %s", (company_id,))
+        company = cur.fetchone()
+        if company is None:
+            flash("Empresa no encontrada.", "warning")
+            return redirect(url_for("home"))
+
+        return render_template(
+            "company_form.html",
+            company=company,
+            form_action_url=url_for("edit_company", company_id=company_id),
+        )
+
+    finally:
+        cur.close()
+        conn.close()
+
 
         return redirect(url_for("home"))
 
