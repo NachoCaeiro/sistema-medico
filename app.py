@@ -1045,9 +1045,8 @@ def build_pdf_from_record(record):
     footer_img = static_path("img", "footer.jpg")
 
     if os.path.exists(footer_img):
-    footer_width = 120  # probá entre 110 y 140 según gusto
-    x_centered = (210 - footer_width) / 2
-    pdf.image(footer_img, x=x_centered, y=255, w=footer_width)
+    footer_y = pdf.h - 35   # ajustá 35 según qué tan alto sea tu footer
+    pdf.image(footer_img, x=10, y=footer_y, w=190)
     else:
         pdf.ln(10)
 
@@ -1393,4 +1392,3 @@ def send_multiple_pdfs_email(to_email, company_name, attachments):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
     app.run(host="0.0.0.0", port=port)
-
